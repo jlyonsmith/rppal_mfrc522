@@ -3,7 +3,7 @@ mod mfrc522;
 mod picc;
 mod register;
 
-use crate::mfrc522::Mfrc522;
+pub use crate::mfrc522::Mfrc522;
 use clap::Parser;
 use core::fmt::Arguments;
 use rppal::{
@@ -70,10 +70,15 @@ impl<'a> RppalMfrc522Tool<'a> {
 
         mfrc522.reset()?;
 
-        for i in 0..10 {
-          let version = mfrc522.version()?;
+        println!("Mfg Version: 0x{:x}", mfrc522.get_version()?);
 
-          println!("Version: 0x{:x}", version);
+        for _ in 0..100 {
+            match mfrc522.read_card_id() {
+                Ok(id) => println!("Card ID: {:x}", id),
+                Err(err) => println!("Error: {}", err),
+            };
+
+            thread::sleep(time::Duration::from_secs(1))
         }
 
         Ok(())

@@ -56,6 +56,13 @@ pub enum PiccCommand {
     UlWrite = 0xA2,
 }
 
+impl From<PiccCommand> for u8 {
+    #[inline(always)]
+    fn from(variant: PiccCommand) -> Self {
+        variant as _
+    }
+}
+
 /// PICC Type
 #[allow(dead_code)]
 #[derive(Debug)]
