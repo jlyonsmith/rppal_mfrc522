@@ -1,11 +1,16 @@
 mod log_macros;
 mod mfrc522;
+mod picc;
+mod register;
 
+use crate::mfrc522::Mfrc522;
 use clap::Parser;
 use core::fmt::Arguments;
+use rppal::{
+    gpio::Gpio,
+    spi::{Bus, Mode, SlaveSelect, Spi},
+};
 use std::error::Error;
-use mfrc522::Mfrc522;
-use rppal::{spi::{Mode, Bus, SlaveSelect, Spi}, gpio::Gpio};
 use std::{thread, time};
 
 pub trait RppalMfrc522Log {
@@ -59,12 +64,16 @@ impl<'a> RppalMfrc522Tool<'a> {
         pin_b.set_low();
         pin_c.set_low();
         reset_pin.set_low();
-        thread::sleep(time::Duration::from_millis(10));
+        thread::sleep(time::Duration::from_millis(50));
         reset_pin.set_high();
 
         let mut mfrc522 = Mfrc522::new(&mut spi);
 
         mfrc522.reset()?;
+
+        let version = mfrc522.version()?;
+
+        println!("Version: 0x{:x}", version);
 
         Ok(())
     }
