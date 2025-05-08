@@ -63,17 +63,18 @@ impl<'a> RppalMfrc522Tool<'a> {
         pin_a.set_low();
         pin_b.set_low();
         pin_c.set_low();
-        reset_pin.set_low();
-        thread::sleep(time::Duration::from_millis(50));
         reset_pin.set_high();
+        thread::sleep(time::Duration::from_millis(50));
 
         let mut mfrc522 = Mfrc522::new(&mut spi);
 
         mfrc522.reset()?;
 
-        let version = mfrc522.version()?;
+        for i in 0..10 {
+          let version = mfrc522.version()?;
 
-        println!("Version: 0x{:x}", version);
+          println!("Version: 0x{:x}", version);
+        }
 
         Ok(())
     }

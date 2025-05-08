@@ -11,18 +11,20 @@ impl Mfrc522<'_> {
         Mfrc522 { spi }
     }
 
-    fn write_register(&mut self, reg: Register, val: u8) -> rppal::spi::Result<usize> {
+    fn write_register(&mut self, reg: Register, val: u8) -> Result<(), Box<dyn Error>> {
         let write_buffer = [((reg as u8) << 1) & 0x7e, val];
 
-        self.spi.write(&write_buffer)
+        self.spi.write(&write_buffer)?;
+        Ok(())
     }
 
     fn read_register(&mut self, reg: Register) -> Result<u8, Box<dyn Error>> {
         let write_buffer = [(((reg as u8) << 1) & 0x7e) | 0x80, 0];
-        let mut read_buffer = [0u8; 1];
+        let mut read_buffer = [0u8; 2];
+
         self.spi.transfer(&mut read_buffer, &write_buffer)?;
 
-        Ok(read_buffer[0])
+        Ok(read_buffer[1])
     }
 
     fn read_write_register(
@@ -46,7 +48,7 @@ impl Mfrc522<'_> {
         self.write_register(Register::TReloadRegHigh, 0)?;
         self.write_register(Register::TxASKReg, 0x40)?; // Default 0x00. Force a 100 % ASK modulation independent of the ModGsPReg register setting
         self.write_register(Register::ModeReg, 0x3d)?; // Default 0x3F. Set the preset value for the CRC coprocessor for the CalcCRC command to 0x6363 (ISO 14443-3 part 6.2.4)
-        self.read_write_register(Register::TxControlReg, |value| value | 0x03)?; // Turn the antenna
+        self.read_write_register(Register::TxControlReg, |value| (value | 0x03))?; // Turn on the antenna
         Ok(())
     }
 
