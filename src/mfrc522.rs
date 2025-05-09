@@ -125,12 +125,18 @@ impl Mfrc522<'_> {
         // Communicate with nearby card and request it to prepare for anti-collision detection
         self.transceive_with_card(&[PiccCommand::ReqA.into()])?;
 
+		// Mifare spec identification and selection takes 2.5ms to settle without collision
+		thread::sleep(Duration::from_micros(2500));
+
         // Section 9.3.1.14 - we want 8 bits of the last byte transmitted
         // TODO @john - Again, why? Where is this defined?
         self.write(Register::BitFramingReg, 0)?;
 
         // Anticollision detection, which actually returns the card id
         let (read_bytes, _) = self.transceive_with_card(&[PiccCommand::SelCl1.into(), 0x20])?;
+
+		// The card is waiting for selection; release it and put it back in the request state
+		self.transceive_with_card(&[PiccCommand::HltA.into(), 0x50, 0x00])?;
 
 		if read_bytes.len() != 5 {
 			return Err(Box::new(Mfrc522Error::BadUidSize))
@@ -184,8 +190,6 @@ impl Mfrc522<'_> {
                 timed_out = true;
                 break;
             }
-
-			thread::sleep(Duration::from_micros(500))
         }
 
 		// Acknowledge the data
