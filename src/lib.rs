@@ -70,12 +70,12 @@ impl<'a> RppalMfrc522Tool<'a> {
 
         mfrc522.reset()?;
 
-        println!("Mfg Version: 0x{:x}", mfrc522.get_version()?);
+        println!("0x{:02x}", mfrc522.get_version()?);
 
-        for _ in 0..100 {
+        for _ in 0..5 {
             match mfrc522.read_card_id() {
-                Ok(id) => println!("Card ID: {:x}", id),
-                Err(err) => println!("Error: {}", err),
+                Ok(id) => println!("0x{:08x}", id),
+                Err(err) => println!("{}", err),
             };
 
             thread::sleep(time::Duration::from_secs(1))
