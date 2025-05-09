@@ -132,8 +132,6 @@ impl Mfrc522<'_> {
         // Anticollision detection, which actually returns the card id
         let (read_bytes, _) = self.transceive_with_card(&[PiccCommand::SelCl1.into(), 0x20])?;
 
-		println!("{}", read_bytes.len());
-
 		if read_bytes.len() != 5 {
 			return Err(Box::new(Mfrc522Error::BadUidSize))
 		}
@@ -186,6 +184,8 @@ impl Mfrc522<'_> {
                 timed_out = true;
                 break;
             }
+
+			thread::sleep(Duration::from_micros(500))
         }
 
 		// Acknowledge the data
