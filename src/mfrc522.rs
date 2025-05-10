@@ -18,6 +18,8 @@ const TIMER_INTERVAL: f64 = 0.015;
 const SAFETY_TIMER_INTERVAL: f64 = 0.025;
 // Max size of FIFO buffer
 const MAX_FIFO_BYTES: usize = 64;
+// The length of a standard MIFARE card ID in bytes
+const CARD_ID_BYTE_LENGTH: usize = 5;
 
 #[derive(Debug, Error)]
 pub enum Mfrc522Error {
@@ -25,8 +27,8 @@ pub enum Mfrc522Error {
     Transceive(u8),
     #[error("safety timeout reading card")]
     SafetyTimeout,
-    #[error("UID is not in expected size of 5 bytes")]
-    BadUidSize,
+    #[error("Card not found")]
+    CardNotFound,
 }
 
 pub struct Mfrc522<'a> {
@@ -122,7 +124,7 @@ impl Mfrc522<'_> {
         // TODO @john - Why do we only want the last 7 bits for this request?
         self.write(Register::BitFramingReg, 0x07)?;
 
-        // Communicate with nearby card and request it to prepare for anti-collision detection
+        // Communicate with any nearby card and request it to prepare for anti-collision detection
         self.transceive_with_card(&[PiccCommand::ReqA.into()])?;
 
 		// Mifare spec identification and selection takes 2.5ms to settle without collision
@@ -138,8 +140,8 @@ impl Mfrc522<'_> {
 		// The card is waiting for selection; release it and put it back in the request state
 		self.transceive_with_card(&[PiccCommand::HltA.into(), 0x50, 0x00])?;
 
-		if read_bytes.len() != 5 {
-			return Err(Box::new(Mfrc522Error::BadUidSize))
+		if read_bytes.len() < CARD_ID_BYTE_LENGTH {
+			return Err(Box::new(Mfrc522Error::CardNotFound))
 		}
 
 		Ok(read_bytes.iter().fold(0u64, |uid, n| uid * 256 + *n as u64))
@@ -209,7 +211,7 @@ impl Mfrc522<'_> {
 
         let mut num_fifo_bytes = self.read(Register::FIFOLevelReg)? as usize;
 
-		num_fifo_bytes = usize::min(usize::max(num_fifo_bytes, 1), MAX_FIFO_BYTES);
+		num_fifo_bytes = usize::min(num_fifo_bytes, MAX_FIFO_BYTES);
 
         let mut valid_last_bits = (self.read(Register::ControlReg)? & 0x07) as usize;
 
@@ -218,7 +220,7 @@ impl Mfrc522<'_> {
             valid_last_bits = 8;
         }
 
-        let mut read_data = Vec::<u8>::with_capacity(num_fifo_bytes);
+        let mut read_data = Vec::<u8>::with_capacity(MAX_FIFO_BYTES);
 
         for _ in 0..num_fifo_bytes {
             read_data.push(self.read(Register::FIFODataReg)?);
