@@ -27,5 +27,5 @@ name = "benchmarks"
 harness = false
 
 [[bin]]
-name = "rppal-mfrc522"
+name = "mfrc522"
 path = "src/bin/rppal_mfrc522.rs"

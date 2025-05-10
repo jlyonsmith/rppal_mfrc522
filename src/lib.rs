@@ -91,14 +91,23 @@ impl<'a> RppalMfrc522Tool<'a> {
         let mut spi = Spi::new(Bus::Spi0, SlaveSelect::Ss0, 8_000_000, Mode::Mode0)?;
 
 		for bcm_pin in cli.low_pins {
-			Gpio::new()?.get(bcm_pin as u8)?.into_output().set_low();
+			let mut pin = Gpio::new()?.get(bcm_pin as u8)?.into_output();
+
+			pin.set_low();
+			pin.set_reset_on_drop(false);
 		}
 
 		for bcm_pin in cli.high_pins {
-			Gpio::new()?.get(bcm_pin as u8)?.into_output().set_high();
+			let mut pin = Gpio::new()?.get(bcm_pin as u8)?.into_output();
+
+			pin.set_high();
+			pin.set_reset_on_drop(false);
 		}
 
-        Gpio::new()?.get(cli.reset_pin as u8)?.into_output().set_high();
+        let mut reset_pin = Gpio::new()?.get(cli.reset_pin as u8)?.into_output();
+
+		reset_pin.set_high();
+		reset_pin.set_reset_on_drop(false);
 
         thread::sleep(time::Duration::from_millis(50));
 
