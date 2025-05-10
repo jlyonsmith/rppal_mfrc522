@@ -4,7 +4,7 @@ mod picc;
 mod register;
 
 pub use crate::mfrc522::Mfrc522;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use core::fmt::Arguments;
 use rppal::{
     gpio::Gpio,
@@ -23,18 +23,53 @@ pub struct RppalMfrc522Tool<'a> {
     log: &'a dyn RppalMfrc522Log,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+#[repr(u8)]
+enum BcmPin {
+    Pin1 = 1,
+    Pin2,
+    Pin3,
+    Pin4,
+    Pin5,
+    Pin6,
+    Pin7,
+    Pin8,
+    Pin9,
+    Pin10,
+    Pin11,
+    Pin12,
+    Pin13,
+    Pin14,
+    Pin15,
+    Pin16,
+    Pin17,
+    Pin18,
+    Pin19,
+    Pin20,
+    Pin21,
+    Pin22,
+    Pin23,
+    Pin24,
+    Pin25,
+    Pin26,
+    Pin27,
+}
+
 #[derive(Parser)]
 #[clap(version, about, long_about = None)]
 struct Cli {
     /// Disable colors in output
     #[arg(long = "no-color", short = 'n', env = "NO_CLI_COLOR")]
     no_color: bool,
+    #[arg(long = "high", short = '1')]
+    high_pins: Vec<BcmPin>,
+    #[arg(long = "low", short = '0')]
+    low_pins: Vec<BcmPin>,
+    #[arg(long = "reset", short = 'r')]
+    reset_pin: BcmPin,
+	#[arg(long = "loops", default_value="1")]
+	num_loops: usize,
 }
-
-const GPIO_SELECTOR_A: u8 = 17;
-const GPIO_SELECTOR_B: u8 = 27;
-const GPIO_SELECTOR_C: u8 = 22;
-const GPIO_RESET: u8 = 20;
 
 impl<'a> RppalMfrc522Tool<'a> {
     pub fn new(log: &'a dyn RppalMfrc522Log) -> RppalMfrc522Tool<'a> {
@@ -45,7 +80,7 @@ impl<'a> RppalMfrc522Tool<'a> {
         self: &mut Self,
         args: impl IntoIterator<Item = std::ffi::OsString>,
     ) -> Result<(), Box<dyn Error>> {
-        let _cli = match Cli::try_parse_from(args) {
+        let cli = match Cli::try_parse_from(args) {
             Ok(m) => m,
             Err(err) => {
                 output!(self.log, "{}", err.to_string());
@@ -55,24 +90,25 @@ impl<'a> RppalMfrc522Tool<'a> {
 
         let mut spi = Spi::new(Bus::Spi0, SlaveSelect::Ss0, 8_000_000, Mode::Mode0)?;
 
-        let mut pin_a = Gpio::new()?.get(GPIO_SELECTOR_A)?.into_output();
-        let mut pin_b = Gpio::new()?.get(GPIO_SELECTOR_B)?.into_output();
-        let mut pin_c = Gpio::new()?.get(GPIO_SELECTOR_C)?.into_output();
-        let mut reset_pin = Gpio::new()?.get(GPIO_RESET)?.into_output();
+		for bcm_pin in cli.low_pins {
+			Gpio::new()?.get(bcm_pin as u8)?.into_output().set_low();
+		}
 
-        pin_a.set_low();
-        pin_b.set_low();
-        pin_c.set_low();
-        reset_pin.set_high();
+		for bcm_pin in cli.high_pins {
+			Gpio::new()?.get(bcm_pin as u8)?.into_output().set_high();
+		}
+
+        Gpio::new()?.get(cli.reset_pin as u8)?.into_output().set_high();
+
         thread::sleep(time::Duration::from_millis(50));
 
         let mut mfrc522 = Mfrc522::new(&mut spi);
 
         mfrc522.reset()?;
 
-        println!("0x{:02x}", mfrc522.get_version()?);
+        println!("Reader Mfg Version: {:#04x}", mfrc522.get_version()?);
 
-        for _ in 0..5 {
+        for _ in 0..cli.num_loops {
             match mfrc522.read_card_id() {
                 Ok(id) => println!("0x{:08x}", id),
                 Err(err) => println!("{}", err),

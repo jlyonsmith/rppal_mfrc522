@@ -1,3 +1,12 @@
+list:
+	just --list
+
+test:
+	@echo Reader J1 ------------------------------
+	cargo run -- -0 pin17 -0 pin27 -0 pin22 -r pin20 --loops 10
+	@echo Reader J2 ------------------------------
+	cargo run -- -1 pin17 -0 pin27 -0 pin22 -r pin20 --loops 10
+
 coverage OPEN='':
   #!/usr/bin/env fish
   set -x RUSTFLAGS '-C instrument-coverage'
