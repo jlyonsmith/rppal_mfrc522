@@ -1,10 +1,86 @@
-use crate::{picc::PiccCommand, register::*};
+use crate::{picc::*, register::*};
 use rppal::spi::Spi;
-use std::time::{Duration, Instant};
 use std::thread;
+use std::time::{Duration, Instant};
 use thiserror::Error;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+
+/// The unique identifier returned by a PICC
+pub enum Uid {
+    /// Single sized UID, 4 bytes long
+    Single(GenericUid<4>),
+    /// Double sized UID, 7 bytes long
+    Double(GenericUid<7>),
+    /// Triple sized UID, 10 bytes long
+    Triple(GenericUid<10>),
+}
+
+impl Uid {
+    /// Get the UID as a byte slice
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            Uid::Single(u) => u.as_bytes(),
+            Uid::Double(u) => u.as_bytes(),
+            Uid::Triple(u) => u.as_bytes(),
+        }
+    }
+
+    /// Get the type of the PICC that returned the UID
+    pub fn get_type(&self) -> PiccType {
+        match self {
+            Uid::Single(u) => u.get_type(),
+            Uid::Double(u) => u.get_type(),
+            Uid::Triple(u) => u.get_type(),
+        }
+    }
+}
+
+/// An identifier that is generic over the size.
+///
+/// This is used internally in the [Uid] enum.
+pub struct GenericUid<const T: usize>
+where
+    [u8; T]: Sized,
+{
+    /// The UID can have 4, 7 or 10 bytes.
+    bytes: [u8; T],
+    /// The SAK (Select acknowledge) byte returned from the PICC after successful selection.
+    sak: Sak,
+}
+
+impl<const T: usize> GenericUid<T> {
+    /// Create a GenericUid from a byte array and a SAK byte.
+    ///
+    /// You shouldn't typically need to use this function as an end-user.
+    /// Instead use the [Uid] returned by the [select](Mfrc522::select) function.
+    pub fn new(bytes: [u8; T], sak_byte: u8) -> Self {
+        Self {
+            bytes,
+            sak: Sak::from(sak_byte),
+        }
+    }
+
+    /// Get the underlying bytes of the UID
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Is the PICC compliant?
+    pub fn is_compliant(&self) -> bool {
+        self.sak.is_compliant()
+    }
+
+    /// Get the type of the PICC
+    pub fn get_type(&self) -> PiccType {
+        self.sak.get_type()
+    }
+}
+
+/// Answer To reQuest type A
+pub struct AtqA {
+    bytes: [u8; 2],
+}
 
 // MFRC522 chip frequency
 const MFRC_FREQ: f64 = 13.56e6;
@@ -19,7 +95,7 @@ const SAFETY_TIMER_INTERVAL: f64 = 0.025;
 // Max size of FIFO buffer
 const MAX_FIFO_BYTES: usize = 64;
 // The length of a standard MIFARE card ID in bytes
-const CARD_ID_BYTE_LENGTH: usize = 5;
+const CARD_ID_BYTE_LENGTH: usize = 4;
 
 #[derive(Debug, Error)]
 pub enum Mfrc522Error {
@@ -80,7 +156,7 @@ impl Mfrc522<'_> {
 
         let prescale_bytes = (PRESCALE as u16).to_be_bytes();
 
-		// See Section 9.3.3.10:
+        // See Section 9.3.3.10:
         // TAuto=1 - timer starts automatically at the end of the transmission in all communication modes at all speeds
         // TGated=0 - timer is not gated by pins MFIN or AUX1
         // TAutoRestart=0 - set IRQ bit instead of restarting timer
@@ -93,7 +169,7 @@ impl Mfrc522<'_> {
         let timer_ticks = (TIMER_INTERVAL / (1.0 / TICK_FREQ)).ceil() as u16;
         let timer_tick_bytes = timer_ticks.to_be_bytes();
 
-		// See Section 9.3.3.11 - timer reload value
+        // See Section 9.3.3.11 - timer reload value
         // e.g. with prescaler interval of 0.5ms, reload time with 30 gives 15ms timeout
         self.write(Register::TReloadRegLow, timer_tick_bytes[1])?;
         self.write(Register::TReloadRegHigh, timer_tick_bytes[0])?;
@@ -120,34 +196,34 @@ impl Mfrc522<'_> {
     }
 
     pub fn read_card_id(&mut self) -> Result<u64> {
-		// Section 9.3.1.14 - we want 7 bits of the last byte transmitted
+        // Section 9.3.1.14 - we want 7 bits of the last byte transmitted
         // TODO @john - Why do we only want the last 7 bits for this request?
         self.write(Register::BitFramingReg, 0x07)?;
 
         // Communicate with any nearby card and request it to prepare for anti-collision detection
-        self.transceive_with_card(&[PiccCommand::ReqA.into()])?;
+        self.transceive(&[PiccCommand::ReqA.into()])?;
 
-		// Mifare spec identification and selection takes 2.5ms to settle without collision
-		thread::sleep(Duration::from_micros(2500));
+        // Mifare spec identification and selection takes 2.5ms to settle without collision
+        thread::sleep(Duration::from_micros(2500));
 
         // Section 9.3.1.14 - we want 8 bits of the last byte transmitted
         // TODO @john - Again, why? Where is this defined?
         self.write(Register::BitFramingReg, 0)?;
 
         // Anticollision detection, which actually returns the card id
-        let (read_bytes, _) = self.transceive_with_card(&[PiccCommand::SelCl1.into(), 0x20])?;
+        let (read_bytes, _) = self.transceive(&[PiccCommand::SelCl1.into(), 0x20])?;
 
-		// The card is waiting for selection; release it and put it back in the request state
-		self.transceive_with_card(&[PiccCommand::HltA.into(), 0x50, 0x00])?;
+        // The card is waiting for selection; release it and put it back in the request state
+        self.transceive(&[PiccCommand::HltA.into(), 0x50, 0x00])?;
 
-		if read_bytes.len() < CARD_ID_BYTE_LENGTH {
-			return Err(Box::new(Mfrc522Error::CardNotFound))
-		}
+        if read_bytes.len() < CARD_ID_BYTE_LENGTH {
+            return Err(Box::new(Mfrc522Error::CardNotFound));
+        }
 
-		Ok(read_bytes.iter().fold(0u64, |uid, n| uid * 256 + *n as u64))
+        Ok(read_bytes.iter().fold(0u64, |uid, n| uid * 256 + *n as u64))
     }
 
-    fn transceive_with_card(&mut self, send_data: &[u8]) -> Result<(Vec<u8>, usize)> {
+    fn transceive(&mut self, send_data: &[u8]) -> Result<(Vec<u8>, usize)> {
         // See Section 9.3.1.3 - enable all IRQ's except HiAlertlEn
         self.write(Register::ComlEnReg, 0b11110111)?;
 
@@ -182,36 +258,36 @@ impl Mfrc522<'_> {
             // See Section 9.3.1.5 - exit on RxlRq, IdlelRq or TimerIRq
             let irq_bits = self.read(Register::ComIrqReg)?;
 
-			// Exit if either the receive completes or the chip timer counts down
-            if (irq_bits & 0b0011_0001u8) != 0  {
+            // Exit if either the receive completes or the chip timer counts down
+            if (irq_bits & 0b0011_0001u8) != 0 {
                 break;
             }
 
-			// Exit if our safety time expires
+            // Exit if our safety time expires
             if Instant::now().duration_since(start_instant) > wait_duration {
                 timed_out = true;
                 break;
             }
         }
 
-		// Acknowledge the data
-		self.read_write(Register::BitFramingReg, |value| value & !0x80)?;
+        // Acknowledge the data
+        self.read_write(Register::BitFramingReg, |value| value & !0x80)?;
 
         // If we hit the safety time out, abort
-		// TODO @john: if we hit the chip timer, abort too?
+        // TODO @john: if we hit the chip timer, abort too?
         if timed_out {
             return Err(Box::new(Mfrc522Error::SafetyTimeout));
         }
 
         let err = self.read(Register::ErrorReg)? & 0b0001_1011;
 
-		if err != 0 {
-			return Err(Box::new(Mfrc522Error::Transceive(err)));
-		}
+        if err != 0 {
+            return Err(Box::new(Mfrc522Error::Transceive(err)));
+        }
 
         let mut num_fifo_bytes = self.read(Register::FIFOLevelReg)? as usize;
 
-		num_fifo_bytes = usize::min(num_fifo_bytes, MAX_FIFO_BYTES);
+        num_fifo_bytes = usize::min(num_fifo_bytes, MAX_FIFO_BYTES);
 
         let mut valid_last_bits = (self.read(Register::ControlReg)? & 0x07) as usize;
 
@@ -222,7 +298,7 @@ impl Mfrc522<'_> {
 
         let mut read_data = Vec::<u8>::with_capacity(MAX_FIFO_BYTES);
 
-        for _ in 0..num_fifo_bytes {
+        for _ in 0..4 {
             read_data.push(self.read(Register::FIFODataReg)?);
         }
 
