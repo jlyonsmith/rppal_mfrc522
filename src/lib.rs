@@ -67,8 +67,8 @@ struct Cli {
     low_pins: Vec<BcmPin>,
     #[arg(long = "reset", short = 'r')]
     reset_pin: BcmPin,
-	#[arg(long = "loops", default_value="1")]
-	num_loops: usize,
+    #[arg(long = "loops", default_value = "1")]
+    num_loops: usize,
 }
 
 impl<'a> RppalMfrc522Tool<'a> {
@@ -88,29 +88,31 @@ impl<'a> RppalMfrc522Tool<'a> {
             }
         };
 
-        let mut spi = Spi::new(Bus::Spi0, SlaveSelect::Ss0, 8_000_000, Mode::Mode0)?;
-
-		for bcm_pin in cli.low_pins {
-			let mut pin = Gpio::new()?.get(bcm_pin as u8)?.into_output();
-
-			pin.set_low();
-			pin.set_reset_on_drop(false);
-		}
-
-		for bcm_pin in cli.high_pins {
-			let mut pin = Gpio::new()?.get(bcm_pin as u8)?.into_output();
-
-			pin.set_high();
-			pin.set_reset_on_drop(false);
-		}
-
         let mut reset_pin = Gpio::new()?.get(cli.reset_pin as u8)?.into_output();
 
-		reset_pin.set_high();
-		reset_pin.set_reset_on_drop(false);
+        reset_pin.set_reset_on_drop(false);
 
+        reset_pin.set_low();
+        thread::sleep(time::Duration::from_millis(100));
+
+        for bcm_pin in cli.low_pins {
+            let mut pin = Gpio::new()?.get(bcm_pin as u8)?.into_output();
+
+            pin.set_reset_on_drop(false);
+            pin.set_low();
+        }
+
+        for bcm_pin in cli.high_pins {
+            let mut pin = Gpio::new()?.get(bcm_pin as u8)?.into_output();
+
+            pin.set_reset_on_drop(false);
+            pin.set_high();
+        }
+
+        reset_pin.set_high();
         thread::sleep(time::Duration::from_millis(50));
 
+        let mut spi = Spi::new(Bus::Spi0, SlaveSelect::Ss0, 1_000_000, Mode::Mode0)?;
         let mut mfrc522 = Mfrc522::new(&mut spi);
 
         mfrc522.reset()?;
@@ -125,6 +127,8 @@ impl<'a> RppalMfrc522Tool<'a> {
 
             thread::sleep(time::Duration::from_secs(1))
         }
+
+        reset_pin.set_low();
 
         Ok(())
     }
