@@ -1,9 +1,9 @@
 [package]
 name = "rppal_mfrc522"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2021"
 authors = ["John Lyon-Smith <john@escapegallery.net>"]
-description = "MFRC522 reader based on the rppal crate"
+description = "MFRC522 SPI based reader using the rppal crate"
 repository = "https://github.com/jlyonsmith/rppal_mfrc522"
 readme = "README.md"
 keywords = []
