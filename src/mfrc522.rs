@@ -1,10 +1,8 @@
 use crate::{picc::*, register::*};
-use rppal::spi::Spi;
+use rppal::spi::{self, Segment, Spi};
 use std::thread;
 use std::time::{Duration, Instant};
 use thiserror::Error;
-
-type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 /// The unique identifier returned by a PICC
 pub enum Uid {
@@ -105,6 +103,8 @@ pub enum Mfrc522Error {
     SafetyTimeout,
     #[error("Card not found")]
     CardNotFound,
+    #[error("SPI error")]
+    SpiError(#[from] spi::Error),
 }
 
 pub struct Mfrc522<'a> {
@@ -116,7 +116,8 @@ impl Mfrc522<'_> {
         Mfrc522 { spi }
     }
 
-    fn write(&mut self, reg: Register, data: u8) -> Result<()> {
+    /// Write a register from the SPI interface
+    fn write(&mut self, reg: Register, data: u8) -> Result<(), Mfrc522Error> {
         // See Section 8.1.2.2 for details of writing to the Mifare registers over SPI
 
         // No zero needed to terminate the data when writing
@@ -127,7 +128,19 @@ impl Mfrc522<'_> {
         Ok(())
     }
 
-    fn read(&mut self, reg: Register) -> Result<u8> {
+    /// Write multiple bytes to a register on the SPI interface, keeping the Slave
+    /// Select (SS) line active until all buffers have been transferred
+    fn write_many(&mut self, reg: Register, buf: &[u8]) -> Result<(), Mfrc522Error> {
+        let address_buf = [(reg as u8) << 1];
+        let segments = [Segment::with_write(&address_buf), Segment::with_write(buf)];
+
+        self.spi.transfer_segments(&segments)?;
+
+        Ok(())
+    }
+
+    /// Read a register from the SPI interface
+    fn read(&mut self, reg: Register) -> Result<u8, Mfrc522Error> {
         // See Section 8.1.2.1 for details of reading from the Mifare registers over SPI
 
         // The zero byte terminates the register addresses when reading.
@@ -142,7 +155,40 @@ impl Mfrc522<'_> {
         Ok(read_buffer[1])
     }
 
-    fn read_write(&mut self, reg: Register, func: impl FnOnce(u8) -> u8) -> Result<()> {
+    /// Read multilple bytes from a register on the SPI interface, keeping Slave Select line
+    /// active until all transfers are complete.
+    fn read_many<'b>(
+        &mut self,
+        reg: Register,
+        buf: &'b mut [u8],
+    ) -> Result<&'b [u8], Mfrc522Error> {
+        // See Section 8.1.2.1 for why we have to initialize the read buffer like this
+        // and Section 8.1.2.3 for why we shift the register address
+        let address = ((reg as u8) << 1) | 0x80;
+        // TODO @john: We could use stackalloc crate to avoid the head allocation here
+        let mut tx_buf = buf.to_vec();
+        for byte in tx_buf.iter_mut() {
+            *byte = address;
+        }
+        if let Some(byte) = tx_buf.last_mut() {
+            *byte = 0;
+        }
+
+        let address_buf = [address];
+        let segments = [
+            Segment::with_write(&address_buf),
+            Segment::new(buf, &tx_buf),
+        ];
+        self.spi.transfer_segments(&segments)?;
+
+        Ok(buf)
+    }
+
+    /// Read-modify-write a register on the SPI interface
+    fn rmw<F>(&mut self, reg: Register, func: F) -> Result<(), Mfrc522Error>
+    where
+        F: FnOnce(u8) -> u8,
+    {
         let value = self.read(reg)?;
         let new_value = func(value);
         self.write(reg, new_value)?;
@@ -150,7 +196,8 @@ impl Mfrc522<'_> {
         Ok(())
     }
 
-    pub fn reset(&mut self) -> Result<()> {
+    /// Reset the reader
+    pub fn reset(&mut self) -> Result<(), Mfrc522Error> {
         // See Section 9.3.1.2 - soft reset the chip, setting all registers to defaults
         self.write(Register::CommandReg, Command::SoftReset.into())?;
 
@@ -187,17 +234,16 @@ impl Mfrc522<'_> {
 
         // See Section 9.3.2.5
         // Tx2RFEn=1 and Tx1RFEn=1 - output 13.56MHz carrier signal on TX1 and TX2
-        self.read_write(Register::TxControlReg, |value| (value | 0x03))?; // Turn on the antenna
+        self.rmw(Register::TxControlReg, |value| (value | 0x03))?; // Turn on the antenna
         Ok(())
     }
 
-    pub fn get_version(&mut self) -> Result<u8> {
+    pub fn get_version(&mut self) -> Result<u8, Mfrc522Error> {
         Ok(self.read(Register::VersionReg)?)
     }
 
-    pub fn read_card_id(&mut self) -> Result<u64> {
+    pub fn read_card_id(&mut self) -> Result<u64, Mfrc522Error> {
         // Section 9.3.1.14 - we want 7 bits of the last byte transmitted
-        // TODO @john - Why do we only want the last 7 bits for this request?
         self.write(Register::BitFramingReg, 0x07)?;
 
         // Communicate with any nearby card and request it to prepare for anti-collision detection
@@ -207,7 +253,6 @@ impl Mfrc522<'_> {
         thread::sleep(Duration::from_micros(2500));
 
         // Section 9.3.1.14 - we want 8 bits of the last byte transmitted
-        // TODO @john - Again, why? Where is this defined?
         self.write(Register::BitFramingReg, 0)?;
 
         // Anticollision detection, which actually returns the card id
@@ -217,21 +262,21 @@ impl Mfrc522<'_> {
         self.transceive(&[PiccCommand::HltA.into(), 0x50, 0x00])?;
 
         if read_bytes.len() < CARD_ID_BYTE_LENGTH {
-            return Err(Box::new(Mfrc522Error::CardNotFound));
+            return Err(Mfrc522Error::CardNotFound);
         }
 
         Ok(read_bytes.iter().fold(0u64, |uid, n| uid * 256 + *n as u64))
     }
 
-    fn transceive(&mut self, send_data: &[u8]) -> Result<(Vec<u8>, usize)> {
+    fn transceive(&mut self, send_data: &[u8]) -> Result<(Vec<u8>, usize), Mfrc522Error> {
         // See Section 9.3.1.3 - enable all IRQ's except HiAlertlEn
         self.write(Register::ComlEnReg, 0b11110111)?;
 
         // See Section 9.3.1.5 - clear all IRQ bits
-        self.read_write(Register::ComIrqReg, |value| value & !0x80)?;
+        self.rmw(Register::ComIrqReg, |value| value & !0x80)?;
 
         // See Section 9.3.1.11 - clear FIFO buffer
-        self.read_write(Register::FIFOLevelReg, |value| value | 0x80)?;
+        self.rmw(Register::FIFOLevelReg, |value| value | 0x80)?;
 
         // See Section 9.3.1.2 - idle, canceling outstand commands
         self.write(Register::CommandReg, Command::Idle.into())?;
@@ -247,7 +292,7 @@ impl Mfrc522<'_> {
         self.write(Register::CommandReg, Command::Transceive.into())?;
 
         // See Section 9.3.1.14 - start data transmission
-        self.read_write(Register::BitFramingReg, |value| value | 0x80)?;
+        self.rmw(Register::BitFramingReg, |value| value | 0x80)?;
 
         // Wait for IRQ bits to indicate timeout or success
         let start_instant = Instant::now();
@@ -271,18 +316,18 @@ impl Mfrc522<'_> {
         }
 
         // Acknowledge the data
-        self.read_write(Register::BitFramingReg, |value| value & !0x80)?;
+        self.rmw(Register::BitFramingReg, |value| value & !0x80)?;
 
         // If we hit the safety time out, abort
         // TODO @john: if we hit the chip timer, abort too?
         if timed_out {
-            return Err(Box::new(Mfrc522Error::SafetyTimeout));
+            return Err(Mfrc522Error::SafetyTimeout);
         }
 
         let err = self.read(Register::ErrorReg)? & 0b0001_1011;
 
         if err != 0 {
-            return Err(Box::new(Mfrc522Error::Transceive(err)));
+            return Err(Mfrc522Error::Transceive(err));
         }
 
         let mut num_fifo_bytes = self.read(Register::FIFOLevelReg)? as usize;

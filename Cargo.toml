@@ -14,6 +14,7 @@ license = "Unlicense"
 anyhow = "1.0.86"
 bitflags = "2.9.0"
 clap = { version = "4.5", features = ["derive", "env"] }
+ctrlc = "3.4.7"
 rppal = "0.22"
 thiserror = "2.0"
 yansi = "1.0"

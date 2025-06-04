@@ -1,11 +1,14 @@
+mod cancellation_token;
 mod log_macros;
 mod mfrc522;
 mod picc;
 mod register;
 
 pub use crate::mfrc522::Mfrc522;
+use cancellation_token::CancellationToken;
 use clap::{Parser, ValueEnum};
 use core::fmt::Arguments;
+use ctrlc;
 use rppal::{
     gpio::Gpio,
     spi::{Bus, Mode, SlaveSelect, Spi},
@@ -67,8 +70,6 @@ struct Cli {
     low_pins: Vec<BcmPin>,
     #[arg(long = "reset", short = 'r')]
     reset_pin: BcmPin,
-    #[arg(long = "loops", default_value = "1")]
-    num_loops: usize,
 }
 
 impl<'a> RppalMfrc522Tool<'a> {
@@ -119,13 +120,26 @@ impl<'a> RppalMfrc522Tool<'a> {
 
         println!("Reader Mfg Version: {:#04x}", mfrc522.get_version()?);
 
-        for _ in 0..cli.num_loops {
+        let token = CancellationToken::new();
+        let token_clone = token.clone();
+
+        ctrlc::set_handler(move || {
+            eprintln!("Ctrl+C received, stopping...");
+            token_clone.cancel();
+            ()
+        })?;
+
+        loop {
             match mfrc522.read_card_id() {
                 Ok(id) => println!("0x{:08x}", id),
                 Err(err) => println!("{}", err),
             };
 
-            thread::sleep(time::Duration::from_secs(1))
+            thread::sleep(time::Duration::from_millis(500));
+
+            if token.is_canceled() {
+                break;
+            }
         }
 
         reset_pin.set_low();
