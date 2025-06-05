@@ -4,40 +4,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
-/// The unique identifier returned by a PICC
-pub enum Uid {
-    /// Single sized UID, 4 bytes long
-    Single(GenericUid<4>),
-    /// Double sized UID, 7 bytes long
-    Double(GenericUid<7>),
-    /// Triple sized UID, 10 bytes long
-    Triple(GenericUid<10>),
-}
-
-impl Uid {
-    /// Get the UID as a byte slice
-    pub fn as_bytes(&self) -> &[u8] {
-        match self {
-            Uid::Single(u) => u.as_bytes(),
-            Uid::Double(u) => u.as_bytes(),
-            Uid::Triple(u) => u.as_bytes(),
-        }
-    }
-
-    /// Get the type of the PICC that returned the UID
-    pub fn get_type(&self) -> PiccType {
-        match self {
-            Uid::Single(u) => u.get_type(),
-            Uid::Double(u) => u.get_type(),
-            Uid::Triple(u) => u.get_type(),
-        }
-    }
-}
-
 /// An identifier that is generic over the size.
 ///
 /// This is used internally in the [Uid] enum.
-pub struct GenericUid<const T: usize>
+pub struct Uid<const T: usize>
 where
     [u8; T]: Sized,
 {
@@ -47,8 +17,8 @@ where
     sak: PiccSak,
 }
 
-impl<const T: usize> GenericUid<T> {
-    /// Create a GenericUid from a byte array and a SAK byte.
+impl<const T: usize> Uid<T> {
+    /// Create a Uid from a byte array and a SAK byte.
     ///
     /// You shouldn't typically need to use this function as an end-user.
     /// Instead use the [Uid] returned by the [select](Mfrc522::select) function.
@@ -315,7 +285,7 @@ impl Mfrc522<'_> {
     }
 
     /// Read the UID of any available card
-    pub fn uid(&mut self) -> Result<Uid, Mfrc522Error> {
+    pub fn uid(&mut self) -> Result<Uid<4>, Mfrc522Error> {
         let _atqa = self.reqa()?;
 
         // Mifare spec identification and selection takes 2.5ms to settle without collision
@@ -329,11 +299,13 @@ impl Mfrc522<'_> {
             return Err(Mfrc522Error::IncompleteFrame);
         }
 
-        let uid = Uid::Single(GenericUid {
+        let uid = Uid {
             sak: PiccSak::from(fifo_data.buffer[0]),
             bytes: fifo_data.buffer[1..=4].try_into().unwrap(),
-        });
+        };
+
         // The card is waiting for selection; release it and put it back in the request state
+        // See MF1S503x Section 8.2.4
         self.hlta()?;
 
         Ok(uid)
