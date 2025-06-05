@@ -118,21 +118,21 @@ impl<'a> RppalMfrc522Tool<'a> {
 
         mfrc522.reset()?;
 
-        println!("Reader Mfg Version: {:#04x}", mfrc522.get_version()?);
+        println!("Reader Mfg Version: {:#04x}", mfrc522.version()?);
 
         let token = CancellationToken::new();
         let token_clone = token.clone();
 
         ctrlc::set_handler(move || {
-            eprintln!("Ctrl+C received, stopping...");
+            eprintln!(" received, stopping...");
             token_clone.cancel();
             ()
         })?;
 
         loop {
-            match mfrc522.read_card_id() {
-                Ok(id) => println!("0x{:08x}", id),
-                Err(err) => println!("{}", err),
+            match mfrc522.uid() {
+                Ok(uid) => println!("{:?}", uid.as_bytes()),
+                Err(_) => {}
             };
 
             thread::sleep(time::Duration::from_millis(500));

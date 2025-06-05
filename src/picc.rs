@@ -92,18 +92,18 @@ pub enum PiccType {
 }
 
 /// Select Acknowledge
-pub struct Sak {
+pub struct PiccSak {
     byte: u8,
 }
 
-impl From<u8> for Sak {
+impl From<u8> for PiccSak {
     fn from(byte: u8) -> Self {
-        Sak { byte }
+        PiccSak { byte }
     }
 }
 
 #[allow(dead_code)]
-impl Sak {
+impl PiccSak {
     pub fn get_type(&self) -> PiccType {
         // https://www.nxp.com/docs/en/application-note/AN10833.pdf
         // 3.2 Coding of Select Acknowledge (SAK)

@@ -44,7 +44,7 @@ where
     /// The UID can have 4, 7 or 10 bytes.
     bytes: [u8; T],
     /// The SAK (Select acknowledge) byte returned from the PICC after successful selection.
-    sak: Sak,
+    sak: PiccSak,
 }
 
 impl<const T: usize> GenericUid<T> {
@@ -55,7 +55,7 @@ impl<const T: usize> GenericUid<T> {
     pub fn new(bytes: [u8; T], sak_byte: u8) -> Self {
         Self {
             bytes,
-            sak: Sak::from(sak_byte),
+            sak: PiccSak::from(sak_byte),
         }
     }
 
@@ -77,7 +77,7 @@ impl<const T: usize> GenericUid<T> {
 
 /// Answer To reQuest type A
 pub struct AtqA {
-    bytes: [u8; 2],
+    pub bytes: [u8; 2],
 }
 
 // MFRC522 chip frequency
@@ -90,21 +90,40 @@ static PRESCALE: f64 = (MFRC_FREQ - TICK_FREQ) / (2.0 * TICK_FREQ);
 const TIMER_INTERVAL: f64 = 0.015;
 // Our safety time when waiting blocking and waiting for the card
 const SAFETY_TIMER_INTERVAL: f64 = 0.025;
-// Max size of FIFO buffer
-const MAX_FIFO_BYTES: usize = 64;
-// The length of a standard MIFARE card ID in bytes
-const CARD_ID_BYTE_LENGTH: usize = 4;
 
+/// Errors that can occur from the crate
 #[derive(Debug, Error)]
 pub enum Mfrc522Error {
-    #[error("error reading card")]
+    #[error("Transceived returned an error from the reader")]
     Transceive(u8),
-    #[error("safety timeout reading card")]
-    SafetyTimeout,
+    #[error("Operation timed out")]
+    Timeout,
+    #[error("Operation was not acknowledged")]
+    Nak,
     #[error("Card not found")]
     CardNotFound,
     #[error("SPI error")]
     SpiError(#[from] spi::Error),
+    #[error("FIFO buffer overflow")]
+    FifoOverflow,
+    #[error("Incomplete frame was received")]
+    IncompleteFrame,
+    #[error("Reader protocol error")]
+    ReaderBadProtocol,
+    #[error("Reader parity error")]
+    ReaderParity,
+    #[error("Reader CRC error")]
+    ReaderCrc,
+    #[error("Reader collision")]
+    ReaderCollision,
+    #[error("Reader overflow")]
+    ReaderOverflow,
+    #[error("Reader overheating")]
+    ReaderOverheating,
+    #[error("Reader bad write")]
+    ReaderBadWrite,
+    #[error("Non standard anti-collision protocol")]
+    Proprietary,
 }
 
 pub struct Mfrc522<'a> {
@@ -196,7 +215,9 @@ impl Mfrc522<'_> {
         Ok(())
     }
 
-    /// Reset the reader
+    /// Resets the reader
+    ///
+    /// Should be called before first time use and to reset a card that has been woken up from being disabled.
     pub fn reset(&mut self) -> Result<(), Mfrc522Error> {
         // See Section 9.3.1.2 - soft reset the chip, setting all registers to defaults
         self.write(Register::CommandReg, Command::SoftReset.into())?;
@@ -235,118 +256,207 @@ impl Mfrc522<'_> {
         // See Section 9.3.2.5
         // Tx2RFEn=1 and Tx1RFEn=1 - output 13.56MHz carrier signal on TX1 and TX2
         self.rmw(Register::TxControlReg, |value| (value | 0x03))?; // Turn on the antenna
+
         Ok(())
     }
 
-    pub fn get_version(&mut self) -> Result<u8, Mfrc522Error> {
+    /// Returns the version reported by the MFRC522.
+    ///
+    /// Common values are 0x91, 0x92 for original Mifare cards, but clones may have values such as 0xb2 and others. So don't
+    /// use this value for anything other than a quick check that you can communicate with the reader.
+    pub fn version(&mut self) -> Result<u8, Mfrc522Error> {
         Ok(self.read(Register::VersionReg)?)
     }
 
-    pub fn read_card_id(&mut self) -> Result<u64, Mfrc522Error> {
-        // Section 9.3.1.14 - we want 7 bits of the last byte transmitted
-        self.write(Register::BitFramingReg, 0x07)?;
+    /// Sets the antenna gain of the receiver
+    ///
+    /// Setting this to a high value could help if you have issues communicating with a card.
+    /// This should increase the *sensitivity* of the antenna, so it is able to detect weaker signals.
+    pub fn set_antenna_gain(&mut self, gain: RxGain) -> Result<(), Mfrc522Error> {
+        self.write(Register::RFCfgReg, gain.into())
+    }
 
-        // Communicate with any nearby card and request it to prepare for anti-collision detection
-        self.transceive(&[PiccCommand::ReqA.into()])?;
+    /// Request card to execute a command
+    fn command(&mut self, command: Command) -> Result<(), Mfrc522Error> {
+        self.write(Register::CommandReg, command.into())
+    }
+
+    /// Sends command to enter HALT state
+    pub fn hlta(&mut self) -> Result<(), Mfrc522Error> {
+        let buffer: [u8; 4] = [PiccCommand::HltA as u8, 0, 0, 0];
+        // TODO @john: Get CRC's working
+        // let crc = self.calculate_crc(&buffer[..2])?;
+        // buffer[2..].copy_from_slice(&crc);
+
+        // The standard says:
+        //   If the PICC responds with any modulation during a period of 1 ms
+        //   after the end of the frame containing the HLTA command,
+        //   this response shall be interpreted as 'not acknowledge'.
+        // We interpret that this way: only Error::Timeout is a success.
+        match self.transceive(&buffer, 0, 0) {
+            Err(Mfrc522Error::Timeout) => Ok(()),
+            Ok(_) => Err(Mfrc522Error::Nak),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Sends a REQuest type A to nearby PICCs
+    pub fn reqa(&mut self) -> Result<AtqA, Mfrc522Error> {
+        // NOTE REQA is a short frame (7 bits)
+        let fifo_data = self.transceive(&[PiccCommand::ReqA as u8], 7, 0)?;
+
+        if fifo_data.buffer.len() != 2 || fifo_data.valid_bits != 0 {
+            Err(Mfrc522Error::IncompleteFrame)
+        } else {
+            Ok(AtqA {
+                bytes: fifo_data.buffer.try_into().unwrap(),
+            })
+        }
+    }
+
+    /// Read the UID of any available card
+    pub fn uid(&mut self) -> Result<Uid, Mfrc522Error> {
+        let _atqa = self.reqa()?;
 
         // Mifare spec identification and selection takes 2.5ms to settle without collision
         thread::sleep(Duration::from_micros(2500));
 
-        // Section 9.3.1.14 - we want 8 bits of the last byte transmitted
-        self.write(Register::BitFramingReg, 0)?;
-
         // Anticollision detection, which actually returns the card id
-        let (read_bytes, _) = self.transceive(&[PiccCommand::SelCl1.into(), 0x20])?;
+        // TODO @john: Do a proper select with collision detection
+        let fifo_data = self.transceive(&[PiccCommand::SelCl1 as u8, 0x20], 0, 0)?;
 
-        // The card is waiting for selection; release it and put it back in the request state
-        self.transceive(&[PiccCommand::HltA.into(), 0x50, 0x00])?;
-
-        if read_bytes.len() < CARD_ID_BYTE_LENGTH {
-            return Err(Mfrc522Error::CardNotFound);
+        if fifo_data.buffer.len() != 5 || fifo_data.valid_bits != 0 {
+            return Err(Mfrc522Error::IncompleteFrame);
         }
 
-        Ok(read_bytes.iter().fold(0u64, |uid, n| uid * 256 + *n as u64))
+        let uid = Uid::Single(GenericUid {
+            sak: PiccSak::from(fifo_data.buffer[0]),
+            bytes: fifo_data.buffer[1..=4].try_into().unwrap(),
+        });
+        // The card is waiting for selection; release it and put it back in the request state
+        self.hlta()?;
+
+        Ok(uid)
     }
 
-    fn transceive(&mut self, send_data: &[u8]) -> Result<(Vec<u8>, usize), Mfrc522Error> {
-        // See Section 9.3.1.3 - enable all IRQ's except HiAlertlEn
-        self.write(Register::ComlEnReg, 0b11110111)?;
-
-        // See Section 9.3.1.5 - clear all IRQ bits
-        self.rmw(Register::ComIrqReg, |value| value & !0x80)?;
-
-        // See Section 9.3.1.11 - clear FIFO buffer
-        self.rmw(Register::FIFOLevelReg, |value| value | 0x80)?;
-
-        // See Section 9.3.1.2 - idle, canceling outstand commands
-        self.write(Register::CommandReg, Command::Idle.into())?;
-
+    // TODO @john: Add a Duration parameter to this call
+    /// Transmit and receive data to a PICC card
+    fn transceive(
+        &mut self,
+        tx_buffer: &[u8],
+        tx_last_bits: u8,
+        rx_align_bits: u8,
+    ) -> Result<FifoData, Mfrc522Error> {
         // See Section 9.3.1.10 - Write output data to 64 byte FIFO buffer
-        assert!(send_data.len() <= 64);
+        assert!(tx_buffer.len() <= 64);
 
-        for i in 0..send_data.len() {
-            self.write(Register::FIFODataReg, send_data[i])?;
-        }
+        // stop any ongoing command
+        self.command(Command::Idle)?;
 
-        // Send the data to any listening PICC card
-        self.write(Register::CommandReg, Command::Transceive.into())?;
+        // clear all interrupt flags
+        self.write(Register::ComIrqReg, 0x7f)?;
 
-        // See Section 9.3.1.14 - start data transmission
-        self.rmw(Register::BitFramingReg, |value| value | 0x80)?;
+        // Flush FIFO buffer. See Section 9.3.1.11
+        self.write(Register::FIFOLevelReg, 1 << 7)?;
 
-        // Wait for IRQ bits to indicate timeout or success
+        // write data to transmit to the FIFO buffer
+        self.write_many(Register::FIFODataReg, tx_buffer)?;
+
+        // signal command
+        self.command(Command::Transceive)?;
+
+        // configure short frame and start transmission
+        self.write(
+            Register::BitFramingReg,
+            (1 << 7) | ((rx_align_bits & 0b0111) << 4) | (tx_last_bits & 0b0111),
+        )?;
+
         let start_instant = Instant::now();
         let wait_duration = Duration::from_secs_f64(SAFETY_TIMER_INTERVAL);
-        let mut timed_out = false;
+
+        /// ComIrqReg: timer decrements the timer value in register TCounterValReg to zero
+        const TIMER_IRQ: u8 = 1 << 0;
+        // ComIrqReg: an error bit in ErrorReg is set
+        const ERR_IRQ: u8 = 1 << 1;
+        // ComIrqReg: TODO
+        const IDLE_IRQ: u8 = 1 << 4;
+        // ComIrqReg: receiver detected the end of a valid data stream
+        const RX_IRQ: u8 = 1 << 5;
 
         loop {
             // See Section 9.3.1.5 - exit on RxlRq, IdlelRq or TimerIRq
-            let irq_bits = self.read(Register::ComIrqReg)?;
+            let irq = self.read(Register::ComIrqReg)?;
 
-            // Exit if either the receive completes or the chip timer counts down
-            if (irq_bits & 0b0011_0001u8) != 0 {
+            if irq & (RX_IRQ | ERR_IRQ | IDLE_IRQ) != 0 {
                 break;
-            }
-
-            // Exit if our safety time expires
-            if Instant::now().duration_since(start_instant) > wait_duration {
-                timed_out = true;
-                break;
+            } else if irq & TIMER_IRQ != 0
+                || Instant::now().duration_since(start_instant) > wait_duration
+            {
+                return Err(Mfrc522Error::Timeout);
             }
         }
 
-        // Acknowledge the data
-        self.rmw(Register::BitFramingReg, |value| value & !0x80)?;
+        self.check_error_register()?;
 
-        // If we hit the safety time out, abort
-        // TODO @john: if we hit the chip timer, abort too?
-        if timed_out {
-            return Err(Mfrc522Error::SafetyTimeout);
+        let num_bytes = self.read(Register::FIFOLevelReg)? as usize;
+        let mut buffer = vec![0; num_bytes];
+        let mut valid_bits = 0;
+
+        if num_bytes > 0 {
+            self.read_many(Register::FIFODataReg, &mut buffer[0..num_bytes])?;
+            valid_bits = (self.read(Register::ControlReg)? & 0x07) as usize;
         }
 
-        let err = self.read(Register::ErrorReg)? & 0b0001_1011;
-
-        if err != 0 {
-            return Err(Mfrc522Error::Transceive(err));
-        }
-
-        let mut num_fifo_bytes = self.read(Register::FIFOLevelReg)? as usize;
-
-        num_fifo_bytes = usize::min(num_fifo_bytes, MAX_FIFO_BYTES);
-
-        let mut valid_last_bits = (self.read(Register::ControlReg)? & 0x07) as usize;
-
-        if valid_last_bits == 0 {
-            // Per Section 9.3.1.13 - the whole last byte is valid
-            valid_last_bits = 8;
-        }
-
-        let mut read_data = Vec::<u8>::with_capacity(MAX_FIFO_BYTES);
-
-        for _ in 0..4 {
-            read_data.push(self.read(Register::FIFODataReg)?);
-        }
-
-        Ok((read_data, valid_last_bits))
+        Ok(FifoData { buffer, valid_bits })
     }
+
+    fn check_error_register(&mut self) -> Result<(), Mfrc522Error> {
+        let err = self.read(Register::ErrorReg)?;
+
+        // ErrorReg: set to logic 1 if the SOF is incorrect
+        pub const PROTOCOL_ERR: u8 = 1 << 0;
+        // ErrorReg: parity check failed
+        pub const PARITY_ERR: u8 = 1 << 1;
+        // ErrorReg: the RxModeReg register’s RxCRCEn bit is set and the CRC calculation fails
+        pub const CRC_ERR: u8 = 1 << 2;
+        // ErrorReg: a bit-collision is detected
+        pub const COLL_ERR: u8 = 1 << 3;
+        // ErrorReg: the host or a MFRC522’s internal state machine (e.g. receiver) tries to
+        // write data to the FIFO buffer even though it is already full
+        pub const BUFFER_OVFL: u8 = 1 << 4;
+        // ErrorReg: internal temperature sensor detects overheating
+        pub const TEMP_ERR: u8 = 1 << 6;
+        // ErrorReg: data is written into the FIFO buffer by the host during the MFAuthent
+        // command or if data is written into the FIFO buffer by the host during the
+        // time between sending the last bit on the RF interface and receiving the
+        // last bit on the RF interface
+        pub const WR_ERR: u8 = 1 << 7;
+
+        if err & PROTOCOL_ERR != 0 {
+            Err(Mfrc522Error::ReaderBadProtocol)
+        } else if err & PARITY_ERR != 0 {
+            Err(Mfrc522Error::ReaderParity)
+        } else if err & CRC_ERR != 0 {
+            Err(Mfrc522Error::ReaderCrc)
+        } else if err & COLL_ERR != 0 {
+            Err(Mfrc522Error::ReaderCollision)
+        } else if err & BUFFER_OVFL != 0 {
+            Err(Mfrc522Error::ReaderOverflow)
+        } else if err & TEMP_ERR != 0 {
+            Err(Mfrc522Error::ReaderOverheating)
+        } else if err & WR_ERR != 0 {
+            Err(Mfrc522Error::ReaderBadWrite)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// Data read from the internal FIFO buffer
+#[derive(Debug, PartialEq)]
+pub struct FifoData {
+    /// The contents of the FIFO buffer
+    pub buffer: Vec<u8>,
+    /// The number of valid bits in the last byte
+    pub valid_bits: usize,
 }
