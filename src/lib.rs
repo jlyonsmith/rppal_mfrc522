@@ -13,7 +13,7 @@ use rppal::{
     gpio::Gpio,
     spi::{Bus, Mode, SlaveSelect, Spi},
 };
-use std::error::Error;
+use std::{error::Error, time::Duration};
 use std::{thread, time};
 
 pub trait RppalMfrc522Log {
@@ -130,12 +130,12 @@ impl<'a> RppalMfrc522Tool<'a> {
         })?;
 
         loop {
-            match mfrc522.uid() {
-                Ok(uid) => println!("{:?}", uid.as_bytes()),
+            match mfrc522.uid(Duration::from_millis(250)) {
+                Ok(uid) => println!("{:#010x}", uid.to_u32()),
                 Err(_) => {}
             };
 
-            thread::sleep(time::Duration::from_millis(500));
+            thread::sleep(time::Duration::from_millis(250));
 
             if token.is_canceled() {
                 break;

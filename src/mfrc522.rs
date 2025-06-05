@@ -4,34 +4,34 @@ use std::thread;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
-/// An identifier that is generic over the size.
-///
-/// This is used internally in the [Uid] enum.
-pub struct Uid<const T: usize>
+/// A 4-byte card id
+pub struct Uid
 where
-    [u8; T]: Sized,
+    [u8; 4]: Sized,
 {
     /// The UID can have 4, 7 or 10 bytes.
-    bytes: [u8; T],
+    bytes: [u8; 4],
     /// The SAK (Select acknowledge) byte returned from the PICC after successful selection.
     sak: PiccSak,
 }
 
-impl<const T: usize> Uid<T> {
-    /// Create a Uid from a byte array and a SAK byte.
-    ///
-    /// You shouldn't typically need to use this function as an end-user.
-    /// Instead use the [Uid] returned by the [select](Mfrc522::select) function.
-    pub fn new(bytes: [u8; T], sak_byte: u8) -> Self {
-        Self {
-            bytes,
-            sak: PiccSak::from(sak_byte),
-        }
+impl Uid {
+    /// Create a Uid from a byte array and a SAK value
+    pub fn new(bytes: [u8; 4], sak: PiccSak) -> Self {
+        Self { bytes, sak }
     }
 
     /// Get the underlying bytes of the UID
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
+    }
+
+    /// Get the UID as an u32
+    pub fn to_u32(&self) -> u32 {
+        ((self.bytes[0] as u32) << 0)
+            + ((self.bytes[1] as u32) << 8)
+            + ((self.bytes[2] as u32) << 16)
+            + ((self.bytes[3] as u32) << 24)
     }
 
     /// Is the PICC compliant?
@@ -58,14 +58,10 @@ const TICK_FREQ: f64 = 1999.7;
 static PRESCALE: f64 = (MFRC_FREQ - TICK_FREQ) / (2.0 * TICK_FREQ);
 // The desired MFRC522 countdown timer interval
 const TIMER_INTERVAL: f64 = 0.015;
-// Our safety time when waiting blocking and waiting for the card
-const SAFETY_TIMER_INTERVAL: f64 = 0.025;
 
 /// Errors that can occur from the crate
 #[derive(Debug, Error)]
 pub enum Mfrc522Error {
-    #[error("Transceived returned an error from the reader")]
-    Transceive(u8),
     #[error("Operation timed out")]
     Timeout,
     #[error("Operation was not acknowledged")]
@@ -154,7 +150,6 @@ impl Mfrc522<'_> {
         // See Section 8.1.2.1 for why we have to initialize the read buffer like this
         // and Section 8.1.2.3 for why we shift the register address
         let address = ((reg as u8) << 1) | 0x80;
-        // TODO @john: We could use stackalloc crate to avoid the head allocation here
         let mut tx_buf = buf.to_vec();
         for byte in tx_buf.iter_mut() {
             *byte = address;
@@ -240,8 +235,7 @@ impl Mfrc522<'_> {
 
     /// Sets the antenna gain of the receiver
     ///
-    /// Setting this to a high value could help if you have issues communicating with a card.
-    /// This should increase the *sensitivity* of the antenna, so it is able to detect weaker signals.
+    /// Setting this to a higher value will increase the sensitivity of the antenna.
     pub fn set_antenna_gain(&mut self, gain: RxGain) -> Result<(), Mfrc522Error> {
         self.write(Register::RFCfgReg, gain.into())
     }
@@ -252,18 +246,17 @@ impl Mfrc522<'_> {
     }
 
     /// Sends command to enter HALT state
-    pub fn hlta(&mut self) -> Result<(), Mfrc522Error> {
-        let buffer: [u8; 4] = [PiccCommand::HltA as u8, 0, 0, 0];
-        // TODO @john: Get CRC's working
-        // let crc = self.calculate_crc(&buffer[..2])?;
-        // buffer[2..].copy_from_slice(&crc);
+    pub fn hlta(&mut self, timeout: Duration) -> Result<(), Mfrc522Error> {
+        let start_instant = Instant::now();
+        let mut buffer: [u8; 4] = [PiccCommand::HltA as u8, 0, 0, 0];
+        let crc = self.calculate_crc(&buffer[..2], timeout)?;
+        buffer[2..].copy_from_slice(&crc);
 
-        // The standard says:
-        //   If the PICC responds with any modulation during a period of 1 ms
-        //   after the end of the frame containing the HLTA command,
-        //   this response shall be interpreted as 'not acknowledge'.
-        // We interpret that this way: only Error::Timeout is a success.
-        match self.transceive(&buffer, 0, 0) {
+        // If the PICC responds with any modulation during a period of 1 ms
+        // after the end of the frame containing the HLTA command,
+        // this response is interpreted as 'not acknowledge',
+        // hence the reversed logic here.
+        match self.transceive(&buffer, 0, timeout.saturating_sub(start_instant.elapsed())) {
             Err(Mfrc522Error::Timeout) => Ok(()),
             Ok(_) => Err(Mfrc522Error::Nak),
             Err(e) => Err(e),
@@ -271,9 +264,9 @@ impl Mfrc522<'_> {
     }
 
     /// Sends a REQuest type A to nearby PICCs
-    pub fn reqa(&mut self) -> Result<AtqA, Mfrc522Error> {
+    pub fn reqa(&mut self, timeout: Duration) -> Result<AtqA, Mfrc522Error> {
         // NOTE REQA is a short frame (7 bits)
-        let fifo_data = self.transceive(&[PiccCommand::ReqA as u8], 7, 0)?;
+        let fifo_data = self.transceive(&[PiccCommand::ReqA as u8], 7, timeout)?;
 
         if fifo_data.buffer.len() != 2 || fifo_data.valid_bits != 0 {
             Err(Mfrc522Error::IncompleteFrame)
@@ -285,15 +278,21 @@ impl Mfrc522<'_> {
     }
 
     /// Read the UID of any available card
-    pub fn uid(&mut self) -> Result<Uid<4>, Mfrc522Error> {
-        let _atqa = self.reqa()?;
+    pub fn uid(&mut self, timeout: Duration) -> Result<Uid, Mfrc522Error> {
+        let start_instant = Instant::now();
+        let _atqa = self.reqa(timeout)?;
 
-        // Mifare spec identification and selection takes 2.5ms to settle without collision
-        thread::sleep(Duration::from_micros(2500));
+        if timeout.saturating_sub(start_instant.elapsed()) > Duration::ZERO {
+            // Mifare spec identification and selection takes 2.5ms to settle without collision
+            thread::sleep(Duration::from_micros(2500));
+        }
 
         // Anticollision detection, which actually returns the card id
-        // TODO @john: Do a proper select with collision detection
-        let fifo_data = self.transceive(&[PiccCommand::SelCl1 as u8, 0x20], 0, 0)?;
+        let fifo_data = self.transceive(
+            &[PiccCommand::SelCl1 as u8, 0x20],
+            0,
+            timeout.saturating_sub(start_instant.elapsed()),
+        )?;
 
         if fifo_data.buffer.len() != 5 || fifo_data.valid_bits != 0 {
             return Err(Mfrc522Error::IncompleteFrame);
@@ -306,45 +305,40 @@ impl Mfrc522<'_> {
 
         // The card is waiting for selection; release it and put it back in the request state
         // See MF1S503x Section 8.2.4
-        self.hlta()?;
+        self.hlta(timeout.saturating_sub(start_instant.elapsed()))?;
 
         Ok(uid)
     }
 
-    // TODO @john: Add a Duration parameter to this call
     /// Transmit and receive data to a PICC card
     fn transceive(
         &mut self,
         tx_buffer: &[u8],
         tx_last_bits: u8,
-        rx_align_bits: u8,
+        timeout: Duration,
     ) -> Result<FifoData, Mfrc522Error> {
         // See Section 9.3.1.10 - Write output data to 64 byte FIFO buffer
         assert!(tx_buffer.len() <= 64);
 
-        // stop any ongoing command
+        // Stop any ongoing command
         self.command(Command::Idle)?;
 
-        // clear all interrupt flags
+        // Clear all interrupt flags
         self.write(Register::ComIrqReg, 0x7f)?;
 
         // Flush FIFO buffer. See Section 9.3.1.11
         self.write(Register::FIFOLevelReg, 1 << 7)?;
 
-        // write data to transmit to the FIFO buffer
+        // Write data to transmit to the FIFO buffer
         self.write_many(Register::FIFODataReg, tx_buffer)?;
 
-        // signal command
+        // Signal transceive
         self.command(Command::Transceive)?;
 
-        // configure short frame and start transmission
-        self.write(
-            Register::BitFramingReg,
-            (1 << 7) | ((rx_align_bits & 0b0111) << 4) | (tx_last_bits & 0b0111),
-        )?;
+        // Configure bit framing and start transmission
+        self.write(Register::BitFramingReg, (1 << 7) | (tx_last_bits & 0b0111))?;
 
         let start_instant = Instant::now();
-        let wait_duration = Duration::from_secs_f64(SAFETY_TIMER_INTERVAL);
 
         /// ComIrqReg: timer decrements the timer value in register TCounterValReg to zero
         const TIMER_IRQ: u8 = 1 << 0;
@@ -361,9 +355,7 @@ impl Mfrc522<'_> {
 
             if irq & (RX_IRQ | ERR_IRQ | IDLE_IRQ) != 0 {
                 break;
-            } else if irq & TIMER_IRQ != 0
-                || Instant::now().duration_since(start_instant) > wait_duration
-            {
+            } else if irq & TIMER_IRQ != 0 || start_instant.elapsed() >= timeout {
                 return Err(Mfrc522Error::Timeout);
             }
         }
@@ -380,6 +372,47 @@ impl Mfrc522<'_> {
         }
 
         Ok(FifoData { buffer, valid_bits })
+    }
+
+    fn calculate_crc(&mut self, data: &[u8], timeout: Duration) -> Result<[u8; 2], Mfrc522Error> {
+        // stop any ongoing command
+        self.command(Command::Idle)?;
+
+        /// DivIrqReg: CalcCRC command is active and all data is processed
+        const CRC_IRQ: u8 = 1 << 2;
+
+        // clear the CRC_IRQ interrupt flag
+        self.write(Register::DivIrqReg, CRC_IRQ)?;
+
+        // Flush FIFO buffer. See Section 9.3.1.11
+        self.write(Register::FIFOLevelReg, 1 << 7)?;
+
+        // write data to transmit to the FIFO buffer
+        self.write_many(Register::FIFODataReg, data)?;
+
+        self.command(Command::CalcCRC)?;
+
+        // Wait for the CRC calculation to complete.
+        let mut irq;
+        let start_instant = Instant::now();
+
+        loop {
+            irq = self.read(Register::DivIrqReg)?;
+
+            if irq & CRC_IRQ != 0 {
+                self.command(Command::Idle)?;
+                let crc = [
+                    self.read(Register::CRCResultRegLow)?,
+                    self.read(Register::CRCResultRegHigh)?,
+                ];
+
+                return Ok(crc);
+            }
+
+            if start_instant.elapsed() > timeout {
+                return Err(Mfrc522Error::Timeout);
+            }
+        }
     }
 
     fn check_error_register(&mut self) -> Result<(), Mfrc522Error> {
