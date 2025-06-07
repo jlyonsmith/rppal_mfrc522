@@ -29,7 +29,7 @@ coverage OPEN='':
   set -x LLVM_PROFILE_FILE (pwd)'/scratch/'(whoami)'-%p-%m.profraw'
   # Using the for loop avoids warnings in output
   for file in (pwd)/scratch/*.profraw; rm $file; end
-  cargo test --tests --target aarch64-unknown-linux-gnu
+  cross test --tests --target aarch64-unknown-linux-gnu
   grcov . -s . --binary-path ./target/debug/ -t html --branch --ignore-not-existing -o ./target/debug/coverage/ --excl-start '^//\s*\{grcov-excl-start\}' --excl-stop '^//\s*\{grcov-excl-end\}'
   cp ./target/debug/coverage/coverage.json ./coverage.json
   if string match -r 'open$' -- '{{OPEN}}'
@@ -101,7 +101,7 @@ release OPERATION='incrPatch':
   if test -e 'justfile' -o -e 'Justfile'
     just coverage
   else
-    cargo test --target aarch64-unknown-linux-gnu
+    cross test --target aarch64-unknown-linux-gnu
   end
 
   if test $status -ne 0

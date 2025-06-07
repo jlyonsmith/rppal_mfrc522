@@ -92,11 +92,15 @@ pub enum Mfrc522Error {
     Proprietary,
 }
 
+/// Provides access to an MFRC522 reader over an SPI interface
+///
+/// Before using, make sure that your Raspberry Pi has the necessary SPI buses enabled using `raspi-config`.
 pub struct Mfrc522<'a> {
     spi: &'a mut Spi,
 }
 
 impl Mfrc522<'_> {
+    /// Constructs a new `Mfrc522`
     pub fn new(spi: &mut Spi) -> Mfrc522 {
         Mfrc522 { spi }
     }
@@ -264,6 +268,8 @@ impl Mfrc522<'_> {
     }
 
     /// Sends a REQuest type A to nearby PICCs
+    ///
+    /// This tells any listening PICC to get ready to get ready for communication
     pub fn reqa(&mut self, timeout: Duration) -> Result<AtqA, Mfrc522Error> {
         // NOTE REQA is a short frame (7 bits)
         let fifo_data = self.transceive(&[PiccCommand::ReqA as u8], 7, timeout)?;
@@ -278,6 +284,12 @@ impl Mfrc522<'_> {
     }
 
     /// Read the UID of any available card
+    ///
+    /// This sends an `PiccCommand::ReqA` to wake up any available card, then a
+    /// `PiccCommand::SelCl1` which gets the PICC to burp out it's UID.
+    /// We then send a `PiccCommand::HltA`
+    /// Which shorts circuits the PICC's state machine and gets the card ready to
+    /// be pinged again.
     pub fn uid(&mut self, timeout: Duration) -> Result<Uid, Mfrc522Error> {
         let start_instant = Instant::now();
         let _atqa = self.reqa(timeout)?;
