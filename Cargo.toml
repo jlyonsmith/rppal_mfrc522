@@ -1,6 +1,6 @@
 [package]
 name = "rppal_mfrc522"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 authors = ["John Lyon-Smith <john@escapegallery.net>"]
 description = "MFRC522 interface crate using the rppal crate and SPI"
