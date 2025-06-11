@@ -46,14 +46,12 @@
 
 #![deny(unsafe_code, missing_docs)]
 
-mod cancellation_token;
 mod log_macros;
 mod mfrc522;
 mod picc;
 mod register;
 
 pub use crate::mfrc522::Mfrc522;
-use cancellation_token::CancellationToken;
 use clap::{Parser, ValueEnum};
 use core::fmt::Arguments;
 use ctrlc;
@@ -61,6 +59,7 @@ use rppal::{
     gpio::Gpio,
     spi::{Bus, Mode, SlaveSelect, Spi},
 };
+use simple_cancelation_token::CancelationToken;
 use std::{error::Error, time::Duration};
 use std::{thread, time};
 
@@ -175,7 +174,7 @@ impl<'a> RppalMfrc522Tool<'a> {
 
         println!("Reader Mfg Version: {:#04x}", mfrc522.version()?);
 
-        let token = CancellationToken::new();
+        let token = CancelationToken::new();
         let token_clone = token.clone();
 
         ctrlc::set_handler(move || {

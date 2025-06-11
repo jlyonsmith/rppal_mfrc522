@@ -144,6 +144,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8478577c03552c21db0e2724ffb8986a5ce7af88107e6be5d2ee6e158c12800"
 
 [[package]]
+name = "lazy_static"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
+
+[[package]]
 name = "libc"
 version = "0.2.172"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -197,6 +203,20 @@ dependencies = [
  "clap",
  "ctrlc",
  "rppal",
+ "simple_cancelation_token",
+ "thiserror",
+ "yansi",
+]
+
+[[package]]
+name = "simple_cancelation_token"
+version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6b74c2c2546ee2977a8918447a48dd33ab599ccf7c001347e872010251b9330"
+dependencies = [
+ "anyhow",
+ "clap",
+ "lazy_static",
  "thiserror",
  "yansi",
 ]
