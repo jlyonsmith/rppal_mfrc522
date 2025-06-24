@@ -1,3 +1,4 @@
+/// Write formatted output to the `output` method of a logger
 #[macro_export]
 macro_rules! output {
   ($log: expr, $fmt: expr) => {
@@ -7,6 +8,8 @@ macro_rules! output {
     $log.output(format_args!($fmt, $($args)+))
   };
 }
+
+/// Write formatted output to the `warning` method of a logger
 #[macro_export]
 macro_rules! warning {
   ($log: expr, $fmt: expr) => {
@@ -17,6 +20,7 @@ macro_rules! warning {
   };
 }
 
+/// Write formatted output to the `error` method of a logger
 #[macro_export]
 macro_rules! error {
   ($log: expr, $fmt: expr) => {
