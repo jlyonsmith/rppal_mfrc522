@@ -117,6 +117,7 @@ impl<'a> RppalMfrc522Tool<'a> {
         let mut mfrc522 = Mfrc522::new(&mut spi);
 
         mfrc522.reset()?;
+        mfrc522.set_antenna_gain(register::RxGain::DB48)?;
 
         println!("Reader Mfg Version: {:#04x}", mfrc522.version()?);
 
