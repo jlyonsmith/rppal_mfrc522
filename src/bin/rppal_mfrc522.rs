@@ -1,6 +1,6 @@
 use core::fmt::Arguments;
 use rppal_mfrc522::{error, RppalMfrc522Log, RppalMfrc522Tool};
-use yansi::Paint;
+use termion::color;
 
 struct RppalMfrc522Logger;
 
@@ -15,10 +15,10 @@ impl RppalMfrc522Log for RppalMfrc522Logger {
         println!("{}", args);
     }
     fn warning(self: &Self, args: Arguments) {
-        eprintln!("{}", Paint::yellow(&format!("warning: {}", args)));
+        eprintln!("{}warning: {}", color::Fg(color::Yellow), args);
     }
     fn error(self: &Self, args: Arguments) {
-        eprintln!("{}", Paint::red(&format!("error: {}", args)));
+        eprintln!("{}error: {}", color::Fg(color::Red), args);
     }
 }
 

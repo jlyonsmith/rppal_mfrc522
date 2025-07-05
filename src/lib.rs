@@ -186,8 +186,8 @@ impl<'a> RppalMfrc522Tool<'a> {
 
         loop {
             match mfrc522.uid(Duration::from_millis(250)) {
-                Ok(uid) => println!("{:#010x}", uid.to_u32()),
-                Err(_) => {}
+                Ok(uid) => println!("{:#010x}        ", uid.to_u32()),
+                Err(_) => println!("No card detected"),
             };
 
             thread::sleep(time::Duration::from_millis(250));
@@ -195,6 +195,8 @@ impl<'a> RppalMfrc522Tool<'a> {
             if token.is_canceled() {
                 break;
             }
+
+            print!("{}", termion::cursor::Up(1));
         }
 
         reset_pin.set_low();
