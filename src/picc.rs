@@ -104,6 +104,7 @@ impl From<u8> for PiccSak {
 
 #[allow(dead_code)]
 impl PiccSak {
+    /// PICC card type
     pub fn get_type(&self) -> PiccType {
         // https://www.nxp.com/docs/en/application-note/AN10833.pdf
         // 3.2 Coding of Select Acknowledge (SAK)

@@ -4,20 +4,20 @@ use std::thread;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
-/// A 4-byte card id
-pub struct Uid
+/// A card id
+pub struct Uid<const T: usize>
 where
-    [u8; 4]: Sized,
+    [u8; T]: Sized,
 {
-    /// The UID can have 4, 7 or 10 bytes.
-    bytes: [u8; 4],
+    /// The UID can have 4, 7 or 10 bytes depending on the card type.
+    bytes: [u8; T],
     /// The SAK (Select acknowledge) byte returned from the PICC after successful selection.
     sak: PiccSak,
 }
 
-impl Uid {
+impl<const T: usize> Uid<T> {
     /// Create a Uid from a byte array and a SAK value
-    pub fn new(bytes: [u8; 4], sak: PiccSak) -> Self {
+    pub fn new(bytes: [u8; T], sak: PiccSak) -> Self {
         Self { bytes, sak }
     }
 
@@ -26,12 +26,15 @@ impl Uid {
         &self.bytes
     }
 
-    /// Get the UID as an u32
+    /// Get the UID as a u32
     pub fn to_u32(&self) -> u32 {
-        ((self.bytes[0] as u32) << 0)
-            + ((self.bytes[1] as u32) << 8)
-            + ((self.bytes[2] as u32) << 16)
-            + ((self.bytes[3] as u32) << 24)
+        if T != 4 {
+            panic!("UID is not 4 bytes u32");
+        }
+        ((self.bytes[3] as u32) << 0)
+            | ((self.bytes[2] as u32) << 8)
+            | ((self.bytes[1] as u32) << 16)
+            | ((self.bytes[0] as u32) << 24)
     }
 
     /// Is the PICC compliant?
@@ -47,6 +50,7 @@ impl Uid {
 
 /// Answer To reQuest type A
 pub struct AtqA {
+    /// Bytes of the ATQA
     pub bytes: [u8; 2],
 }
 
@@ -62,32 +66,46 @@ const TIMER_INTERVAL: f64 = 0.015;
 /// Errors that can occur from the crate
 #[derive(Debug, Error)]
 pub enum Mfrc522Error {
+    /// Operation timed out
     #[error("Operation timed out")]
     Timeout,
+    /// Operation was not acknowledged
     #[error("Operation was not acknowledged")]
     Nak,
+    /// Card was not found
     #[error("Card not found")]
     CardNotFound,
+    /// SPI error
     #[error("SPI error")]
     SpiError(#[from] spi::Error),
+    /// FIFO buffer overflow
     #[error("FIFO buffer overflow")]
     FifoOverflow,
+    /// Incomplete frame was received
     #[error("Incomplete frame was received")]
     IncompleteFrame,
+    /// Reader protocol error
     #[error("Reader protocol error")]
     ReaderBadProtocol,
+    /// Reader parity error
     #[error("Reader parity error")]
     ReaderParity,
+    /// Reader CRC error
     #[error("Reader CRC error")]
     ReaderCrc,
+    /// Reader collision
     #[error("Reader collision")]
     ReaderCollision,
+    /// Reader overflow
     #[error("Reader overflow")]
     ReaderOverflow,
+    /// Reader overheating
     #[error("Reader overheating")]
     ReaderOverheating,
+    /// Reader bad write
     #[error("Reader bad write")]
     ReaderBadWrite,
+    /// Non standard anti-collision protocol
     #[error("Non standard anti-collision protocol")]
     Proprietary,
 }
@@ -290,7 +308,7 @@ impl Mfrc522<'_> {
     /// We then send a `PiccCommand::HltA`
     /// Which shorts circuits the PICC's state machine and gets the card ready to
     /// be pinged again.
-    pub fn uid(&mut self, timeout: Duration) -> Result<Uid, Mfrc522Error> {
+    pub fn uid(&mut self, timeout: Duration) -> Result<Uid<4>, Mfrc522Error> {
         let start_instant = Instant::now();
         let _atqa = self.reqa(timeout)?;
 
