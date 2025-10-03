@@ -7,7 +7,7 @@ coverage OPEN='':
   set -x LLVM_PROFILE_FILE (pwd)'/scratch/'(whoami)'-%p-%m.profraw'
   # Using the for loop avoids warnings in output about non-existent files
   for file in (pwd)/scratch/*.profraw; rm $file; end
-  cross test --tests --target aarch64-unknown-linux-gnu
+  cargo test --tests --target aarch64-unknown-linux-gnu
   grcov . --source-dir . --binary-path ./target/aarch64-unknown-linux-gnu/debug \
     --output-types html --branch --ignore-not-existing --output-path ./target/debug/coverage \
     --excl-start '^//\s*\{grcov-excl-start\}' --excl-stop '^//\s*\{grcov-excl-end\}'
@@ -81,7 +81,7 @@ release OPERATION='incrPatch':
   if test -e 'justfile' -o -e 'Justfile'
     just coverage
   else
-    cross test --target aarch64-unknown-linux-gnu
+    cargo test --target aarch64-unknown-linux-gnu
   end
 
   if test $status -ne 0
