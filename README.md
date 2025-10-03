@@ -19,19 +19,22 @@ What is implemented:
 - `version()` function to read the board manufacturing identifier
 - Proper division of timeouts across internal calls
 
-What does not work:
+What does not work, because I don't currently need it:
 
 - Collision detection of multiple cards
 - Reading/writing the PICC card data
 
-I used the [`cross`][4] crate for cross compilation to the `aarch64-unknown-linux-gnu` Raspberry Pi 64-bit platform. *I have not been able to get the code coverage to work properly so the 100% code coverage number is incorrect.*
-
 ## Command Line Tool
 
-The crate includes a command line program for testing called `rppal-mfrc522`. Run it with the `--help` argument to see options.
+The crate includes a command line program for testing called `rppal-mfrc522`. Run it with the `--help` argument to see options. Comes in really handy for debugging and testing.
+
+## Development
+
+You can use the [`cross`][4] crate for cross compilation to the `aarch64-unknown-linux-gnu` Raspberry Pi 64-bit platform. To develop I use a RPi 5 with 16GB RAM and an external USB NVMe drive.  I use the [Zed](https://zed.dev/) editor and edit the files remotely from a Macbook.
 
 ---
 
 [1]: https://crates.io/crates/rppal
 [2]: https://crates.io/crates/mfrc522
 [3]: https://pypi.org/project/mfrc522-python
+[4]: https://crates.io/crates/cross
