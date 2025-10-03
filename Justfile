@@ -1,28 +1,6 @@
 list:
 	just --list
 
-test:
-	#!/usr/bin/env fish
-	set LOOPS 5
-	set MFRC522 'target/aarch64-unknown-linux-gnu/debug/mfrc522'
-	cargo build
-	echo Reader J1 ------------------------------
-	$MFRC522 -0 pin17 -0 pin27 -0 pin22 -r pin20 --loops $LOOPS
-	echo Reader J2 ------------------------------
-	$MFRC522 -1 pin17 -0 pin27 -0 pin22 -r pin20 --loops $LOOPS
-	echo Reader J3 ------------------------------
-	$MFRC522 -0 pin17 -1 pin27 -0 pin22 -r pin20 --loops $LOOPS
-	echo Reader J4 ------------------------------
-	$MFRC522 -1 pin17 -1 pin27 -0 pin22 -r pin20 --loops $LOOPS
-	echo Reader J5 ------------------------------
-	$MFRC522 -0 pin17 -0 pin27 -1 pin22 -r pin20 --loops $LOOPS
-	echo Reader J6 ------------------------------
-	$MFRC522 -1 pin17 -0 pin27 -1 pin22 -r pin20 --loops $LOOPS
-	echo Reader J7 ------------------------------
-	$MFRC522 -1 pin17 -1 pin27 -0 pin22 -r pin20 --loops $LOOPS
-	echo Reader J8 ------------------------------
-	$MFRC522 -1 pin17 -1 pin27 -1 pin22 -r pin20 --loops $LOOPS
-
 coverage OPEN='':
   #!/usr/bin/env fish
   set -x RUSTFLAGS '-Cinstrument-coverage'

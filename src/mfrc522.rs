@@ -11,19 +11,21 @@ where
 {
     /// The UID can have 4, 7 or 10 bytes depending on the card type.
     bytes: [u8; T],
+    /// The ATQA (Answer To reQuest type A) bytes returned from the PICC after successful selection.
+    pub atqa: AtqA,
     /// The SAK (Select acknowledge) byte returned from the PICC after successful selection.
-    sak: PiccSak,
+    pub sak: PiccSak,
 }
 
 impl<const T: usize> Uid<T> {
     /// Create a Uid from a byte array and a SAK value
-    pub fn new(bytes: [u8; T], sak: PiccSak) -> Self {
-        Self { bytes, sak }
+    pub fn new(bytes: [u8; T], sak: PiccSak, atqa: AtqA) -> Self {
+        Self { bytes, sak, atqa }
     }
 
     /// Get the underlying bytes of the UID
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.bytes
+    pub fn as_bytes(&self) -> [u8; T] {
+        self.bytes.clone()
     }
 
     /// Get the UID as a u32
@@ -31,20 +33,10 @@ impl<const T: usize> Uid<T> {
         if T != 4 {
             panic!("UID is not 4 bytes u32");
         }
-        ((self.bytes[3] as u32) << 0)
-            | ((self.bytes[2] as u32) << 8)
+        ((self.bytes[0] as u32) << 24)
             | ((self.bytes[1] as u32) << 16)
-            | ((self.bytes[0] as u32) << 24)
-    }
-
-    /// Is the PICC compliant?
-    pub fn is_compliant(&self) -> bool {
-        self.sak.is_compliant()
-    }
-
-    /// Get the type of the PICC
-    pub fn get_type(&self) -> PiccType {
-        self.sak.get_type()
+            | ((self.bytes[2] as u32) << 8)
+            | ((self.bytes[3] as u32) << 0)
     }
 }
 
@@ -52,6 +44,18 @@ impl<const T: usize> Uid<T> {
 pub struct AtqA {
     /// Bytes of the ATQA
     pub bytes: [u8; 2],
+}
+
+impl AtqA {
+    /// Create a new AtqA from a byte array
+    pub fn new(bytes: [u8; 2]) -> Self {
+        Self { bytes }
+    }
+
+    /// Get the underlying bytes of the ATQA
+    pub fn to_u16(&self) -> u16 {
+        self.bytes[1] as u16 | ((self.bytes[0] as u16) << 8)
+    }
 }
 
 // MFRC522 chip frequency
@@ -310,7 +314,7 @@ impl Mfrc522<'_> {
     /// be pinged again.
     pub fn uid(&mut self, timeout: Duration) -> Result<Uid<4>, Mfrc522Error> {
         let start_instant = Instant::now();
-        let _atqa = self.reqa(timeout)?;
+        let atqa = self.reqa(timeout)?;
 
         if timeout.saturating_sub(start_instant.elapsed()) > Duration::ZERO {
             // Mifare spec identification and selection takes 2.5ms to settle without collision
@@ -329,8 +333,9 @@ impl Mfrc522<'_> {
         }
 
         let uid = Uid {
-            sak: PiccSak::from(fifo_data.buffer[0]),
-            bytes: fifo_data.buffer[1..=4].try_into().unwrap(),
+            atqa,
+            sak: PiccSak::from(fifo_data.buffer[4]),
+            bytes: fifo_data.buffer[0..=3].try_into().unwrap(),
         };
 
         // The card is waiting for selection; release it and put it back in the request state

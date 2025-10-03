@@ -196,8 +196,13 @@ impl<'a> RppalMfrc522Tool<'a> {
 
         loop {
             match mfrc522.uid(Duration::from_millis(250)) {
-                Ok(uid) => println!("{:#010x}        ", uid.to_u32()),
-                Err(_) => println!("No card detected"),
+                Ok(uid) => print!(
+                    "UID: {:#010x}         \nATQA: {:#06x}  SAK: {:#02x}   \n",
+                    uid.to_u32(),
+                    uid.atqa.to_u16(),
+                    uid.sak.to_u8()
+                ),
+                Err(_) => print!("No card detected     \n                          \n"),
             };
 
             thread::sleep(time::Duration::from_millis(250));
@@ -206,9 +211,10 @@ impl<'a> RppalMfrc522Tool<'a> {
                 break;
             }
 
-            print!("{}", termion::cursor::Up(1));
+            print!("{}", termion::cursor::Up(2));
         }
 
+        print!("\n\n");
         reset_pin.set_low();
 
         Ok(())

@@ -63,35 +63,7 @@ impl From<PiccCommand> for u8 {
     }
 }
 
-/// PICC Type
-#[allow(dead_code)]
-#[derive(Debug)]
-pub enum PiccType {
-    /// PICC type not known
-    Unknown,
-    /// PICC compliant with ISO/IEC 14443-4
-    Iso14443_4,
-    /// PICC compliant with ISO/IEC 18092 (NFC)
-    Iso18092,
-    /// MIFARE Classic protocol, 320 bytes
-    MifareMini,
-    /// MIFARE Classic protocol, 1KB
-    Mifare1k,
-    /// MIFARE Classic protocol, 4KB
-    Mifare4k,
-    /// MIFARE Ultralight or Ultralight C
-    MifareUL,
-    /// MIFARE Plus
-    MifarePlus,
-    /// MIFARE DESFire
-    MifareDesfire,
-    /// Only mentioned in NXP AN 10833 MIFARE Type Identification Procedure
-    TNP3XXX,
-    /// SAK indicates UID is not complete.
-    NotComplete,
-}
-
-/// Select Acknowledge
+/// Select Acknowledge response (SAK)
 pub struct PiccSak {
     byte: u8,
 }
@@ -102,26 +74,14 @@ impl From<u8> for PiccSak {
     }
 }
 
-#[allow(dead_code)]
 impl PiccSak {
-    /// PICC card type
-    pub fn get_type(&self) -> PiccType {
-        // https://www.nxp.com/docs/en/application-note/AN10833.pdf
+    /// Get the SAK value
+    pub fn to_u8(&self) -> u8 {
+        // See https://www.nxp.com/docs/en/application-note/AN10833.pdf
         // 3.2 Coding of Select Acknowledge (SAK)
-        // ignore 8-bit (iso14443 starts with LSBit = bit 1)
-        // fixes wrong type for manufacturer Infineon (http://nfc-tools.org/index.php?title=ISO14443A)
-        match self.byte & 0x7F {
-            0x04 => PiccType::NotComplete, // UID not complete
-            0x09 => PiccType::MifareMini,
-            0x08 => PiccType::Mifare1k,
-            0x18 => PiccType::Mifare4k,
-            0x00 => PiccType::MifareUL,
-            0x10 | 0x11 => PiccType::MifarePlus,
-            0x01 => PiccType::TNP3XXX,
-            0x20 => PiccType::Iso14443_4,
-            0x40 => PiccType::Iso18092,
-            _ => PiccType::Unknown,
-        }
+        // ignore 8th-bit (iso14443 starts with LSBit = bit 1)
+        // Fixes wrong type for manufacturer Infineon (http://nfc-tools.org/index.php?title=ISO14443A)
+        self.byte & 0x7F
     }
 
     /// Is the PICC compliant with ISO/IEC 14443-4
