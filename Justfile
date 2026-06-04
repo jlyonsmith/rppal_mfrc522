@@ -107,3 +107,10 @@ release OPERATION='incrPatch':
 
   info "Finished release of '"$name"' on branch '"$branch"'. You can publish the crate."
   exit 0
+
+del-last-tag:
+  #!/usr/bin/env fish
+  set tagName (cat "scratch/version.tag.txt")
+
+  git tag -d $tagName
+  git push origin --delete $tagName
