@@ -123,7 +123,7 @@ pub struct Mfrc522<'a> {
 
 impl Mfrc522<'_> {
     /// Constructs a new `Mfrc522`
-    pub fn new(spi: &mut Spi) -> Mfrc522 {
+    pub fn new(spi: &mut Spi) -> Mfrc522<'_> {
         Mfrc522 { spi }
     }
 
@@ -246,7 +246,7 @@ impl Mfrc522<'_> {
 
         // See Section 9.3.2.5
         // Tx2RFEn=1 and Tx1RFEn=1 - output 13.56MHz carrier signal on TX1 and TX2
-        self.rmw(Register::TxControlReg, |value| (value | 0x03))?; // Turn on the antenna
+        self.rmw(Register::TxControlReg, |value| value | 0x03)?; // Turn on the antenna
 
         Ok(())
     }
