@@ -126,12 +126,18 @@ struct Cli {
     /// Disable colors in output
     #[arg(long = "no-color", short = 'n', env = "NO_CLI_COLOR")]
     no_color: bool,
+
     #[arg(long = "high", short = '1')]
     high_pins: Vec<BcmPin>,
+
     #[arg(long = "low", short = '0')]
     low_pins: Vec<BcmPin>,
+
     #[arg(long = "reset", short = 'r')]
     reset_pin: BcmPin,
+
+    #[arg(long, short = 'c', default_value = "1_000_000")]
+    clock_speed: u32,
 }
 
 impl<'a> RppalMfrc522Tool<'a> {
@@ -177,7 +183,7 @@ impl<'a> RppalMfrc522Tool<'a> {
         reset_pin.set_high();
         thread::sleep(time::Duration::from_millis(50));
 
-        let mut spi = Spi::new(Bus::Spi0, SlaveSelect::Ss0, 1_000_000, Mode::Mode0)?;
+        let mut spi = Spi::new(Bus::Spi0, SlaveSelect::Ss0, cli.clock_speed, Mode::Mode0)?;
         let mut mfrc522 = Mfrc522::new(&mut spi);
 
         mfrc522.reset()?;
