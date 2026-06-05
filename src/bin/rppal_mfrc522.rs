@@ -1,5 +1,4 @@
 use clap::{Parser, ValueEnum};
-use core::fmt::Arguments;
 use ctrlc;
 use rppal::{
     gpio::Gpio,
@@ -9,84 +8,16 @@ use rppal_mfrc522::{Mfrc522, RxGain};
 use simple_cancelation_token::CancelationToken;
 use std::{error::Error, time::Duration};
 use std::{thread, time};
-use termion::color;
-
-/// Write formatted output to the `output` method of a logger
-#[macro_export]
-macro_rules! output {
-  ($log: expr, $fmt: expr) => {
-    $log.output(format_args!($fmt))
-  };
-  ($log: expr, $fmt: expr, $($args: tt)+) => {
-    $log.output(format_args!($fmt, $($args)+))
-  };
-}
-
-/// Write formatted output to the `warning` method of a logger
-#[macro_export]
-macro_rules! warning {
-  ($log: expr, $fmt: expr) => {
-    $log.warning(format_args!($fmt))
-  };
-  ($log: expr, $fmt: expr, $($args: tt)+) => {
-    $log.warning(format_args!($fmt, $($args)+))
-  };
-}
-
-/// Write formatted output to the `error` method of a logger
-#[macro_export]
-macro_rules! error {
-  ($log: expr, $fmt: expr) => {
-    $log.error(format_args!($fmt))
-  };
-  ($log: expr, $fmt: expr, $($args: tt)+) => {
-    $log.error(format_args!($fmt, $($args)+))
-  };
-}
-
-struct RppalMfrc522Logger;
-
-impl RppalMfrc522Logger {
-    fn new() -> RppalMfrc522Logger {
-        RppalMfrc522Logger {}
-    }
-}
-
-/// Logging trait for the [RppalMfrc522Tool].
-pub trait RppalMfrc522Log {
-    /// Normal program output, usually goes to `stdout``
-    fn output(self: &Self, args: Arguments);
-    /// Warning output, normally goes to `stderr``
-    fn warning(self: &Self, args: Arguments);
-    /// Error output, normally goes to `stderr`
-    fn error(self: &Self, args: Arguments);
-}
-
-impl RppalMfrc522Log for RppalMfrc522Logger {
-    fn output(self: &Self, args: Arguments) {
-        println!("{}", args);
-    }
-    fn warning(self: &Self, args: Arguments) {
-        eprintln!("{}warning: {}", color::Fg(color::Yellow), args);
-    }
-    fn error(self: &Self, args: Arguments) {
-        eprintln!("{}error: {}", color::Fg(color::Red), args);
-    }
-}
 
 fn main() {
-    let logger = RppalMfrc522Logger::new();
-
-    if let Err(error) = RppalMfrc522Tool::new(&logger).run(std::env::args_os()) {
-        error!(logger, "{}", error);
+    if let Err(error) = RppalMfrc522Tool::new().run(std::env::args_os()) {
+        eprintln!("{}", error);
         std::process::exit(1);
     }
 }
 
 /// A tool for testing an MFRC522 device connected over an available SPI interface on the command line
-pub struct RppalMfrc522Tool<'a> {
-    log: &'a dyn RppalMfrc522Log,
-}
+pub struct RppalMfrc522Tool {}
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 #[repr(u8)]
@@ -136,14 +67,14 @@ struct Cli {
     #[arg(long = "reset", short = 'r')]
     reset_pin: BcmPin,
 
-    #[arg(long, short = 'c', default_value = "1_000_000")]
+    #[arg(long = "clock", short = 'c', default_value = "1_000_000")]
     clock_speed: u32,
 }
 
-impl<'a> RppalMfrc522Tool<'a> {
-    /// Create a new [RppalMfrc522Tool] with a logger
-    pub fn new(log: &'a dyn RppalMfrc522Log) -> RppalMfrc522Tool<'a> {
-        RppalMfrc522Tool { log }
+impl RppalMfrc522Tool {
+    /// Create a new [RppalMfrc522Tool]
+    pub fn new() -> RppalMfrc522Tool {
+        RppalMfrc522Tool {}
     }
 
     /// Run the tool with the given command line arguments
@@ -154,7 +85,7 @@ impl<'a> RppalMfrc522Tool<'a> {
         let cli = match Cli::try_parse_from(args) {
             Ok(m) => m,
             Err(err) => {
-                output!(self.log, "{}", err.to_string());
+                eprintln!("{}", err.to_string());
                 return Ok(());
             }
         };
@@ -224,33 +155,5 @@ impl<'a> RppalMfrc522Tool<'a> {
         reset_pin.set_low();
 
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn basic_test() {
-        struct TestLogger;
-
-        impl TestLogger {
-            fn new() -> TestLogger {
-                TestLogger {}
-            }
-        }
-
-        impl RppalMfrc522Log for TestLogger {
-            fn output(self: &Self, _args: Arguments) {}
-            fn warning(self: &Self, _args: Arguments) {}
-            fn error(self: &Self, _args: Arguments) {}
-        }
-
-        let logger = TestLogger::new();
-        let mut tool = RppalMfrc522Tool::new(&logger);
-        let args: Vec<std::ffi::OsString> = vec!["".into(), "--help".into()];
-
-        tool.run(args).unwrap();
     }
 }
