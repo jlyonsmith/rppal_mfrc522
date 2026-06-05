@@ -67,7 +67,7 @@ struct Cli {
     #[arg(long = "reset", short = 'r')]
     reset_pin: BcmPin,
 
-    #[arg(long = "clock", short = 'c', default_value = "1_000_000")]
+    #[arg(long = "clock", short = 'c', default_value_t = 1_000_000u32)]
     clock_speed: u32,
 }
 
