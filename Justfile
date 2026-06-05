@@ -1,3 +1,6 @@
+export build := 'release'
+export bin_name := 'mfrc522'
+
 list:
 	just --list
 
@@ -15,6 +18,21 @@ coverage OPEN='':
   if string match -r 'open$' -- '{{OPEN}}'
     open target/debug/coverage/index.html
   end
+
+# Build for RPi
+build:
+  #!/usr/bin/env fish
+  if test $build = "release"; set -a release_flag "--release"; end
+  colima ssh -- cargo build --target aarch64-unknown-linux-gnu $release_flag
+
+# Deploy to a host
+deploy HOST:
+    #!/usr/bin/env fish
+    set -a host_name {{HOST}}
+    scp target/aarch64-unknown-linux-gnu/{$build}/{$bin_name} {$USER}@{$host_name}:.
+    scp scripts/deploy_tool.fish {$USER}@{$host_name}:.
+    ssh {$USER}@{$host_name} "fish ./deploy_tool.fish $bin_name"
+    and echo "Deployment completed"
 
 doc OPEN='':
   #!/usr/bin/env fish

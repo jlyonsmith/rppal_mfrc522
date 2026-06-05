@@ -1,0 +1,13 @@
+{
+  "name": "Rust",
+  "build": {
+    "dockerfile": "Dockerfile",
+  },
+  "mounts": [
+    {
+      "source": "devcontainer-cargo-cache-${devcontainerId}",
+      "target": "/usr/local/cargo",
+      "type": "volume",
+    },
+  ],
+}
